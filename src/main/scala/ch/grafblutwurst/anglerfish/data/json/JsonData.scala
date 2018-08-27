@@ -1,4 +1,4 @@
-package com.scigility.anglerfish.data.json
+package ch.grafblutwurst.anglerfish.data.json
 
 import scala.collection.immutable.ListMap
 

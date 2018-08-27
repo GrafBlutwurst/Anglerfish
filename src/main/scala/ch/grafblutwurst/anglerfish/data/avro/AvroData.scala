@@ -1,4 +1,4 @@
-package com.scigility.anglerfish.data.avro
+package ch.grafblutwurst.anglerfish.data.avro
 
 import eu.timepit.refined._
 import eu.timepit.refined.numeric._
@@ -9,8 +9,7 @@ import eu.timepit.refined.collection._
 import matryoshka.data.Nu
 
 import scala.collection.immutable.{ListMap, ListSet}
-/*import matryoshka._
-import implicits._*/
+
 
 object AvroData{
 

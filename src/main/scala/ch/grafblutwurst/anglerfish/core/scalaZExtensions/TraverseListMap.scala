@@ -1,4 +1,4 @@
-package com.scigility.anglerfish.core.scalaZExtensions
+package ch.grafblutwurst.anglerfish.core.scalaZExtensions
 
 import scalaz._
 import Scalaz._

@@ -1,4 +1,4 @@
-package com.scigility.anglerfish.core.stdLibExtensions
+package ch.grafblutwurst.anglerfish.core.stdLibExtensions
 
 import scala.collection.immutable.ListMap
 

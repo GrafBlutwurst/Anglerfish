@@ -1,16 +1,16 @@
-package com.scigility.anglerfish.data.avro
+package ch.grafblutwurst.anglerfish.data.avro
 
 import java.util.Base64
 
 import scalaz._
 import Scalaz._
-import com.scigility.anglerfish.data.avro.AvroData._
-import com.scigility.anglerfish.data.json.JsonData._
-import com.scigility.anglerfish.data.json.JsonFAlgebras._
-import com.scigility.anglerfish.data.avro.implicits._
-import com.scigility.anglerfish.data.json.implicits._
-import com.scigility.anglerfish.core.scalaZExtensions.MonadErrorSyntax._
-import com.scigility.anglerfish.core.stdLibExtensions.ListSyntax._
+import ch.grafblutwurst.anglerfish.data.avro.AvroData._
+import ch.grafblutwurst.anglerfish.data.json.JsonData._
+import ch.grafblutwurst.anglerfish.data.json.JsonFAlgebras._
+import ch.grafblutwurst.anglerfish.data.avro.implicits._
+import ch.grafblutwurst.anglerfish.data.json.implicits._
+import ch.grafblutwurst.anglerfish.core.scalaZExtensions.MonadErrorSyntax._
+import ch.grafblutwurst.anglerfish.core.stdLibExtensions.ListSyntax._
 import matryoshka.{Algebra, Birecursive, GAlgebra}
 import matryoshka.implicits._
 import eu.timepit.refined.api.{Refined, Validate}
@@ -21,7 +21,7 @@ import eu.timepit.refined.string._
 import eu.timepit.refined._
 import matryoshka.data.Nu
 import matryoshka.data.Fix
-import com.scigility.anglerfish.data.json.JsonData._
+import ch.grafblutwurst.anglerfish.data.json.JsonData._
 
 import scala.collection.immutable.{ListMap, ListSet}
 

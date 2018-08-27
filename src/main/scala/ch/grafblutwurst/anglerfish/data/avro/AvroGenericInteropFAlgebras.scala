@@ -1,8 +1,8 @@
-package com.scigility.anglerfish.data.avro
+package ch.grafblutwurst.anglerfish.data.avro
 
 
-import com.scigility.anglerfish.data.avro.AvroData._
-import com.scigility.anglerfish.data.avro.implicits._
+import ch.grafblutwurst.anglerfish.data.avro.AvroData._
+import ch.grafblutwurst.anglerfish.data.avro.implicits._
 import eu.timepit.refined._
 import eu.timepit.refined.api.{Refined, Validate}
 import eu.timepit.refined.auto._

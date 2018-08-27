@@ -1,6 +1,6 @@
-package com.scigility.anglerfish.data.avro
+package ch.grafblutwurst.anglerfish.data.avro
 
-import com.scigility.anglerfish.data.avro.AvroData.{AvroName, AvroNamespace, AvroValidName, AvroValidNamespace}
+import ch.grafblutwurst.anglerfish.data.avro.AvroData.{AvroName, AvroNamespace, AvroValidName, AvroValidNamespace}
 import eu.timepit.refined.api.{Refined, Validate}
 import eu.timepit.refined.auto._
 import eu.timepit.refined.collection.NonEmpty

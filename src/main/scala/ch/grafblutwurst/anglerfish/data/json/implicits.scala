@@ -1,9 +1,9 @@
-package com.scigility.anglerfish.data.json
+package ch.grafblutwurst.anglerfish.data.json
 
 import scalaz._
 import Scalaz._
 import JsonData._
-import com.scigility.anglerfish.core.scalaZExtensions.TraverseListMap._
+import ch.grafblutwurst.anglerfish.core.scalaZExtensions.TraverseListMap._
 
 
 object implicits {

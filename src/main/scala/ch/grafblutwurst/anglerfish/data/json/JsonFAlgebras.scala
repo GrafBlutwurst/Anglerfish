@@ -1,4 +1,4 @@
-package com.scigility.anglerfish.data.json
+package ch.grafblutwurst.anglerfish.data.json
 
 import matryoshka._
 import matryoshka.implicits._
@@ -7,8 +7,8 @@ import Scalaz._
 import JsonData._
 import io.circe.parser._
 import io.circe._
-import com.scigility.anglerfish.core.scalaZExtensions.MonadErrorSyntax._
-import com.scigility.anglerfish.data.json.implicits._
+import ch.grafblutwurst.anglerfish.core.scalaZExtensions.MonadErrorSyntax._
+import ch.grafblutwurst.anglerfish.data.json.implicits._
 import scala.collection.immutable.ListMap
 
 

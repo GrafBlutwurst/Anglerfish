@@ -1,4 +1,4 @@
-package com.scigility.anglerfish.data.avro
+package ch.grafblutwurst.anglerfish.data.avro
 
 import scala.collection.immutable.{ ListMap, ListSet }
 import scalaz.Applicative
