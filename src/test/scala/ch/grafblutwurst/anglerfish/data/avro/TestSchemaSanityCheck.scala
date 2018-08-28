@@ -31,23 +31,34 @@ object TestSchemaSanityCheck extends Properties("Sanity Check") {
     val avroJsonString =
       """
         |{
-        | "value":0,
+        | "value":1,
         | "tail": {
         |   "foo": {
-        |     "value": 0,
+        |     "value": 2,
         |     "tail": {
         |       "foo": {
-        |         "value": 0,
+        |         "value": 3,
         |         "tail": {
         |           "foo": {
-        |             "value":15,
-        |             "tail":null
+        |             "value":4,
+        |             "tail":{
+        |                "foo" : {
+        |                  "value":5,
+        |                  "tail": {
+        |                    "foo" : {
+        |                      "value":6,
+        |                      "tail":null
+        |                    }
+        |                  }
+        |                }
+        |              }
+        |             }
         |           }
         |         }
         |       }
         |     }
         |   }
-        | }
+        |
         |}
       """.stripMargin
 

@@ -426,6 +426,11 @@ object AvroJsonFAlgebras {
     }
   }
 
+  private def expandRecursiveReference(schema:AvroType[Nu[AvroType]])(implicit typeBirec:Birecursive.Aux[Nu[AvroType], AvroType]):AvroType[Nu[AvroType]] = schema match {
+    case member: AvroRecursionType[Nu[AvroType]] => typeBirec.project(member.lazyType)
+    case x: AvroType[Nu[AvroType]] => x
+  }
+
 
   private[this] def selectUnionMemberByName[M[_]](members:List[Nu[AvroType]], selector:String)(
     implicit
@@ -434,10 +439,7 @@ object AvroJsonFAlgebras {
   ):M[AvroType[Nu[AvroType]]] =
     members
       .map(x => typeBirec.project(x))
-      .map {
-        case member: AvroRecursionType[Nu[AvroType]] => typeBirec.project(member.lazyType)
-        case x: AvroType[Nu[AvroType]] => x
-      }
+      .map(expandRecursiveReference)
       .flatMap {
       case member: AvroBooleanType[_] =>  if(selector == "boolean") List(member) else Nil
       case member: AvroIntType[_] =>if(selector == "int") List(member) else Nil
@@ -531,12 +533,11 @@ object AvroJsonFAlgebras {
       case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
     case json:JsonFArray[AvroType[Nu[AvroType]] => M[F[AvroValue[Nu[AvroType], ?]]]] => {
-      case schema:AvroArrayType[Nu[AvroType]] => json.values.traverse(f => f(typeBirec.project(schema.items))).map(elems => valueBirec.embed(AvroArrayValue(schema, elems)))
+      case schema:AvroArrayType[Nu[AvroType]] => json.values.traverse(f => f(expandRecursiveReference(typeBirec.project(schema.items)))).map(elems => valueBirec.embed(AvroArrayValue(schema, elems)))
       case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
     case json:JsonFObject[AvroType[Nu[AvroType]] => M[F[AvroValue[Nu[AvroType], ?]]]] => {
-      //case schema:AvroRecursionType[Nu[AvroType]] => parseAvroDatumAlgebra(M, typeBirec, valueBirec)(json)(typeBirec.project(schema.lazyType))
-      case schema:AvroMapType[Nu[AvroType]] => json.fields.traverse(f => f(typeBirec.project(schema.values))).map(elems => valueBirec.embed(AvroMapValue(schema, elems)))
+      case schema:AvroMapType[Nu[AvroType]] => json.fields.traverse(f => f(expandRecursiveReference(typeBirec.project(schema.values)))).map(elems => valueBirec.embed(AvroMapValue(schema, elems)))
       case schema:AvroUnionType[Nu[AvroType]] => for {
           member <-
             json.fields.foldLeft(M.pure(Option.empty[(String, AvroType[Nu[AvroType]] => M[F[AvroValue[Nu[AvroType], ?]]])]))(
@@ -566,7 +567,7 @@ object AvroJsonFAlgebras {
           _ <- if (missingRecFields.isEmpty) M.pure(()) else M.raiseError[F[AvroValue[Nu[AvroType], ?]]](RecordError(s"declared Fields $missingRecFields are missing"))
           _ <- if (unmappedJsonFields.isEmpty) M.pure(()) else M.raiseError[F[AvroValue[Nu[AvroType], ?]]](RecordError(s"jsonFields Fields $unmappedJsonFields have no schema mapping"))
 
-          fldsWithSchema <- schema.fields.map(kv => kv._1.name -> (kv._1.name, typeBirec.project(kv._2))).traverse(
+          fldsWithSchema <- schema.fields.map(kv => kv._1.name -> (kv._1.name, expandRecursiveReference(typeBirec.project(kv._2)))).traverse(
             kv => M.fromEither(json.fields.get(kv._1).toRight(RecordError(s"json field ${kv._1} is not declares on schema"))).map(f => (kv._2 ,f))
           )
 
