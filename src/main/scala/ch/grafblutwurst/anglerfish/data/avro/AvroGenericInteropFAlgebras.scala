@@ -35,8 +35,6 @@ import scala.util.{Failure, Success, Try}
   *  e.g. to get from a schema to an internal representation
 **/
 
-//TODO: CLEAN UP
-//TODO: reformulate to applicative error?
 //TODO: default support
 //TODO: record reference support
 
@@ -45,9 +43,6 @@ import scala.util.{Failure, Success, Try}
 object AvroGenericInteropFAlgebras {
 
 
-  //FIXME: Maybe rewrite this to some generic Error Structure (MonadError, maybe something weaker???)
-
-  //FIXME: This needs a rewrite. ListSet and Set need to be sorted out see toList.toSet to get to a proper Set rather than a ListSet. but Set has no Traversable instance, consider just using ListSet
   private[this] def handleAvroAliasesJavaSet[M[_], A, P](jSetO: java.util.Set[A])(implicit M:MonadError[M, Throwable], validateEv:Validate[A,P]): M[OptionalNonEmptySet[A Refined P]] = {
     val inverse = Option(jSetO).flatMap(
       jset => {
@@ -141,7 +136,7 @@ object AvroGenericInteropFAlgebras {
       }
     } yield out
 
-    def refineInstance(componentSchema:AvroType[Nu[AvroType]]): Any => M[(Nu[AvroType], Any)] = componentSchema match {
+    def extractForNextRecursionStep(componentSchema:AvroType[Nu[AvroType]]): Any => M[(Nu[AvroType], Any)] = componentSchema match {
           case AvroNullType() => _ =>  M.pure((birec.embed(componentSchema), null))
           case AvroBooleanType() => value => checkValueType[Boolean](value, componentSchema).map(tpl => (tpl._1, tpl._2:Any))
           case AvroIntType() => value => checkValueType[Int](value, componentSchema).map(tpl => (tpl._1, tpl._2:Any))
@@ -165,7 +160,7 @@ object AvroGenericInteropFAlgebras {
         .fold(
           M.raiseError[AvroValue[Nu[AvroType], (Nu[AvroType], Any)]](new RuntimeException(s"Unresolved Union: ${unionSchema.members} did not contain a $typeLabel"))
         )(
-          memberSchema => refineInstance(memberSchema)(unionValue).map( tpl => AvroUnionValue(unionSchema, tpl) )
+          memberSchema => extractForNextRecursionStep(memberSchema)(unionValue).map(tpl => AvroUnionValue(unionSchema, tpl) )
         )
 
 
@@ -173,7 +168,7 @@ object AvroGenericInteropFAlgebras {
       case recursive:AvroRecursionType[Nu[AvroType]] => birec.project(recursive.lazyType)
       case x: AvroType[Nu[AvroType]] => x
     }
-    
+
     outerSchema match {
       case _:AvroRecursionType[_] => M.raiseError(new RuntimeException("Encountered a recursive type where we shouldn't have one frankly"))
       case nullSchema:AvroNullType[Nu[AvroType]] => M.pure(AvroNullValue(nullSchema))
@@ -187,18 +182,18 @@ object AvroGenericInteropFAlgebras {
       case rec:AvroRecordType[Nu[AvroType]] => for {
         genRec <- checkValueType[GenericData.Record](tp._2, rec).map(_._2)
         fields <- rec.fields.toList.traverse (
-          fieldDefinition => refineInstance(birec.project(fieldDefinition._2))(genRec.get(fieldDefinition._1.name)).map(tpl => fieldDefinition._1.name -> tpl)
+          fieldDefinition => extractForNextRecursionStep(birec.project(fieldDefinition._2))(genRec.get(fieldDefinition._1.name)).map(tpl => fieldDefinition._1.name -> tpl)
         ).map(_.toListMap)
       } yield AvroRecordValue(rec, fields)
 
       case enumSchema:AvroEnumType[Nu[AvroType]] => checkValueType[GenericData.EnumSymbol](tp._2, outerSchema).map(tpl => AvroEnumValue(enumSchema, tpl._2.toString))
       case arraySchema:AvroArrayType[Nu[AvroType]] => {
-        val refinement = refineInstance(birec.project(arraySchema.items))
+        val refinement = extractForNextRecursionStep(birec.project(arraySchema.items))
         val elemsE = checkValueType[GenericData.Array[Any]](tp._2, arraySchema).map(_._2.iterator.asScala.toList)
         elemsE.flatMap(elem => Traverse[List].traverse(elem)(refinement)).map( elems => AvroArrayValue(arraySchema, elems) )
       }
       case mapSchema: AvroMapType[Nu[AvroType]] => {
-        val refinement = refineInstance(birec.project(mapSchema.values))
+        val refinement = extractForNextRecursionStep(birec.project(mapSchema.values))
         val elemsE = checkValueType[java.util.HashMap[String, Any]](tp._2, mapSchema).map(_._2.asScala.toMap)
         elemsE.flatMap(elem => Traverse[Map[String,?]].traverse(elem)(refinement)).map( elems => AvroMapValue(mapSchema, elems) )
       }

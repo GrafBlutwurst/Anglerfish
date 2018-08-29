@@ -69,7 +69,9 @@ object AvroData{
 
 
 
-  sealed trait AvroValue[S, A]
+  sealed trait AvroValue[S, A]{
+    val schema:AvroType[S]
+  }
 
   sealed trait AvroPrimitiveValue[S, A] extends AvroValue[S, A]
   final case class AvroNullValue[S, A](schema:AvroNullType[S]) extends AvroPrimitiveValue[S, A]
