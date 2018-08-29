@@ -13,50 +13,9 @@ import scala.collection.immutable.{ListMap, ListSet}
 
 object AvroData{
 
-  //Required Refinements
-  final case class AvroValidUnion()
-
-  /**
-    * This makes sure that a List of AvroTypes actually forms a valid Union as defined in
-    *  https://avro.apache.org/docs/1.8.1/spec.html#Unions
-  **/
- /* implicit def validateUnionMembers[F[_[_]]](implicit birec:Birecursive.Aux[F[AvroType], AvroType]): Validate.Plain[List[F[AvroType]], AvroValidUnion] = //TODO: Figure out how to apply this
-    Validate.fromPredicate(
-      lstF =>{
-        val lst = lstF.map(birec.project(_))
-        lst.filter{ case AvroUnionType(_) => true }.length == 0 && // avro unions may not contain any other unions directly
-        lst.map{ 
-          case AvroNullType() => 1
-          case AvroBooleanType() => 2
-          case AvroIntType() => 3
-          case AvroLongType() => 4
-          case AvroFloatType() => 5
-          case AvroDoubleType() => 6
-          case AvroBytesType() => 7
-          case AvroStringType() => 8
-          case _: AvroMapType[_] => 9
-          case _: AvroArrayType[_] => 10
-          case _ => 0
-        }
-          .filter( _> 0)
-          .groupBy(identity)
-          .forall(_._2.length == 1) && // make sure there are no non-named avro typed double in the union
-        lst.map{ 
-          case rec: AvroRecordType[_] => (rec.namespace, rec.name)
-          case enum: AvroEnumType[_] => (enum.namespace, enum.name)
-          case fixed:AvroFixedType[_] => (fixed.namespace, fixed.name)
-          case _ => ("", "")
-        }
-          .filter( tp => tp._1 != "" && tp._2 != "")
-          .groupBy(identity)
-          .forall(_._2 == 1) // make sure that named members (enums, fixed and records) do not appear more than once
-      },
-      lst => s"$lst is a valid list of union members", 
-      AvroValidUnion()
-    )*/
-
   //Avro Types required to represent Schemata
   //TODO: extend with logical types and arbitraty properties
+  //FIXME: Something saner than Vector[]
 
 
   type AvroValidName = MatchesRegex[W.`"[A-Za-z_][A-Za-z0-9_]*"`.T]

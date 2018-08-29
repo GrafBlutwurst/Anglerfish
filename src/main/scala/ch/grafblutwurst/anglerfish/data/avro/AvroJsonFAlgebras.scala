@@ -468,6 +468,7 @@ object AvroJsonFAlgebras {
       case member: AvroFixedType[_] => if(selector == Util.constructFQN(member.namespace, member.name).value) List(member) else Nil
       case _ : AvroUnionType[_] => Nil //cannot nest unions
       case _ : AvroNullType[_] => Nil //handled seperatly
+      case _ : AvroRecursionType[_] => Nil //impossible to reach due to previous map but else the compiler is crying
     }
     match {
       case winner::Nil => M.pure(winner)
