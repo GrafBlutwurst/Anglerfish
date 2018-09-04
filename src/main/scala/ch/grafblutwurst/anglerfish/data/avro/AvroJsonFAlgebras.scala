@@ -179,7 +179,6 @@ object AvroJsonFAlgebras {
                         case f: FieldDefinition => M.pure((tpl._1 ++ f.discoveredTypes, tpl._2 ::: List(f)))
                         case _ => M.raiseError[(Map[String, Nu[AvroType]], List[FieldDefinition])](UnexpectedParsingResult())
                       }
-                      case -\/(_) => M.raiseError[(Map[String, Nu[AvroType]], List[FieldDefinition])](UnexpectedParsingResult())
                       case \/-(_) => M.raiseError[(Map[String, Nu[AvroType]], List[FieldDefinition])](UnexpectedParsingResult())
                     }
                   }
@@ -502,17 +501,11 @@ object AvroJsonFAlgebras {
     }
     case json:JsonFNumberInt[_] => {
       case schema:AvroIntType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroIntValue(schema, json.value)))
-      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
-    }
-    case json:JsonFNumberInt[_] => {
       case schema:AvroLongType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroLongValue(schema, json.value))) //FIXME OHOH int maybe too small on jsonF
       case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
     case json:JsonFNumberDouble[_] => {
       case schema:AvroFloatType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroFloatValue(schema, json.value.toFloat))) //FIXME OHOH 2 shouldn't be an issue but not pretty
-      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
-    }
-    case json:JsonFNumberDouble[_] => {
       case schema:AvroDoubleType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroDoubleValue(schema, json.value)))
       case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
