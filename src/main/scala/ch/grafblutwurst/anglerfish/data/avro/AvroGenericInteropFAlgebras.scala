@@ -48,7 +48,7 @@ object AvroGenericInteropFAlgebras {
     implicit 
       rec:Recursive.Aux[F[AvroValue[Nu[AvroType], ?]], AvroValue[Nu[AvroType], ?]],
       M: MonadError[M, Throwable]
-  ):M[Any] =
+  ):M[T] =
     for {
       anyFolded <- rec.cataM(avroValue)(avroValueToGenericRepr[M])
       t <- Typeable[T].cast(anyFolded).fold(
