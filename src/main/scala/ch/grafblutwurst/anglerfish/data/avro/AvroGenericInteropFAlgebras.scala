@@ -42,6 +42,25 @@ import scala.util.{Failure, Success, Try}
 //BUG: will crash if used on in-code generated GenericRecord. I suspect that the change from String to avro.util.UTF8 happens during serialization. Will have to build in some sort of runtime type mappings
 object AvroGenericInteropFAlgebras {
 
+  def avroValueToGenericRepr[M[_], F[_[_]], T: Typeable ](
+    avroValue:F[AvroValue[Nu[AvroType], ?]]
+  )(
+    implicit 
+      rec:Recursive.Aux[F[AvroValue[Nu[AvroType], ?]], AvroValue[Nu[AvroType], ?]],
+      M: MonadError[M, Throwable]
+  ):M[Any] =
+    for {
+      anyFolded <- rec.cataM(avroValue)(avroValueToGenericRepr[M])
+      t <- Typeable[T].cast(anyFolded).fold(
+        M.raiseError[T](new RuntimeException("Could not downcast to expected Type. Now your T should depend what you pass in as a AvroValue (e.g. AvroRecordValue should be GenericRecord). Sadly I have not found a way to do this dependently typed yet"))
+      )(
+        x => M.pure(x)
+      )
+    } yield t
+    
+
+  def avroTypeToGenericSchema[M[_]: MonadError[?[_], Throwable]](avroType: Nu[AvroType]):M[Schema] =  avroType.cataM(avroTypeToSchema[M])
+
 
   private[this] def handleAvroAliasesJavaSet[M[_], A, P](jSetO: java.util.Set[A])(implicit M:MonadError[M, Throwable], validateEv:Validate[A,P]): M[OptionalNonEmptySet[A Refined P]] = {
     val inverse = Option(jSetO).flatMap(
