@@ -1,6 +1,6 @@
 # ANGLERFISH
 
-![](https://i.imgur.com/pIgyPR6.jpg)
+![](logo.png)
 
 Anglerfish is a pure functional library about odds and ends in the big data world.
 If you have ever worked with Avro GenericRecords and wanted to set your computer on fire you might want to have a look at this lib.
