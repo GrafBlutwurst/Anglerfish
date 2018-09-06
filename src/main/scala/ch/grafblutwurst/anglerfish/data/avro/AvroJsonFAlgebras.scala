@@ -58,9 +58,10 @@ object AvroJsonFAlgebras {
   final case class TypePosition(parentTypes:Set[String], schemaReferences:Map[String, Nu[AvroType]]) extends AvroSchemaParsingContext
   final case class RecordFieldDefinition(parentTypes:Set[String], schemaReferences:Map[String, Nu[AvroType]]) extends AvroSchemaParsingContext
   final case class RecordFieldListDefinition(parentTypes:Set[String], schemaReferences:Map[String, Nu[AvroType]]) extends AvroSchemaParsingContext
-  final case class DefaultDefinition(schema:Nu[AvroType]) extends AvroSchemaParsingContext
+  final case class DefaultDefinition() extends AvroSchemaParsingContext
   final case class LiteralDefinition() extends AvroSchemaParsingContext
   final case class AliasesDefinition() extends AvroSchemaParsingContext
+  final case class DefaultValueDefition() extends AvroSchemaParsingContext
   final case class EnumSymbolDefinition() extends AvroSchemaParsingContext
 
 
@@ -71,6 +72,7 @@ object AvroJsonFAlgebras {
   final case class IntLiteral(i:Int) extends IntermediateResults
   final case class DoubleLiteral(d:Double) extends IntermediateResults
   final case class StringLiteral(s:String) extends IntermediateResults
+  final case class JsonFLiteral[F[_[_]]](jsonF:F[JsonF]) extends IntermediateResults
   final case class Aliases(aliases:Set[AvroFQN] Refined NonEmpty) extends IntermediateResults
   final case class EnumSymbols(symbols:ListSet[AvroName] Refined NonEmpty) extends IntermediateResults
   final case class FieldDefinition(discoveredTypes: Map[String, Nu[AvroType]], meta:AvroRecordFieldMetaData, avroType: Nu[AvroType]) extends IntermediateResults
@@ -78,7 +80,7 @@ object AvroJsonFAlgebras {
 
 
   //FIXME error handling
-  def parseAvroSchemaAlgebra[M[_], F[_[_]]](implicit M:MonadError[M, Throwable], jsonBirec:Birecursive.Aux[F[JsonF], JsonF], typeBirec:Birecursive.Aux[Nu[AvroType], AvroType]):
+  def parseAvroSchemaAlgebra[M[_], F[_[_]]](implicit M:MonadError[M, Throwable], jsonBirec:Birecursive.Aux[F[JsonF], JsonF], typeBirec:Birecursive.Aux[Nu[AvroType], AvroType], valueBirec:Birecursive.Aux[F[AvroValue[Nu[AvroType], ?]], AvroValue[Nu[AvroType], ?]]):
     Algebra[
       JsonF,
       AvroSchemaParsingContext => M[IntermediateResults] \/ M[(Map[String, Nu[AvroType]], Nu[AvroType])]
@@ -179,22 +181,27 @@ object AvroJsonFAlgebras {
         jsonF match {
           case json:JsonFNull[Out]         =>  {
             case LiteralDefinition() => -\/(M.pure(NullLiteral()))
+            case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFNull[F[JsonF]]()))))
             case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
           }
           case json:JsonFTrue[Out]         =>  {
             case LiteralDefinition() => -\/(M.pure(BooleanLiteral(true)))
+            case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFTrue[F[JsonF]]()))))
             case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
           }
           case json:JsonFFalse[Out]        =>  {
             case LiteralDefinition() => -\/(M.pure(BooleanLiteral(false)))
+            case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFFalse[F[JsonF]]()))))
             case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
           }
           case json:JsonFNumberDouble[Out] =>  {
             case LiteralDefinition() => -\/(M.pure(DoubleLiteral(json.value)))
+            case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberDouble[F[JsonF]](json.value)))))
             case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
           }
           case json:JsonFNumberInt[Out]    =>  {
             case LiteralDefinition() => -\/(M.pure(IntLiteral(json.value)))
+            case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberInt[F[JsonF]](json.value)))))
             case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
           }
           case json:JsonFString[Out]       =>  {
@@ -220,6 +227,7 @@ object AvroJsonFAlgebras {
               )
             }
             case LiteralDefinition() => -\/(M.pure(StringLiteral(json.value)))
+            case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFString[F[JsonF]](json.value)))))
             case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
           }
           // Can be a Union if in type position, or a list of fields if in the fields property
@@ -260,7 +268,17 @@ object AvroJsonFAlgebras {
                 tpl => FieldDefinitions(tpl._2)
               )
             )
-
+            case DefaultDefinition() => -\/(
+              json.values.traverse(
+                f => f(DefaultDefinition()).fold(
+                  lm => lm.flatMap {
+                    case jl:JsonFLiteral[F] => M.pure(jl.jsonF)
+                    case x => M.raiseError[F[JsonF]](InvalidParserState(DefaultDefinition(), "default jsonF of array", x))
+                  },
+                  rm => rm.flatMap(t => M.raiseError[F[JsonF]](InvalidParserState(DefaultDefinition(), "default jsonF of array", t)))
+                )
+              ).map(values => JsonFLiteral(jsonBirec.embed(JsonFArray(values))))
+            )
             case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
           }
           case json:JsonFObject[Out] => {
@@ -427,10 +445,32 @@ object AvroJsonFAlgebras {
 
                 discoveryTypeTuple <- fieldAsR(json.fields)("type", "field type")(TypePosition(parents, refs))((refs, avroType) => M.pure((refs, avroType)))
 
-              } yield FieldDefinition(discoveryTypeTuple._1, AvroRecordFieldMetaData(name, doc, None, order, aliases), discoveryTypeTuple._2):IntermediateResults
+                fieldType = discoveryTypeTuple._2
+
+                defaultAvroValue <- fieldAsLOpt(json.fields)("default", "default value")(DefaultDefinition()) {
+                  case jl:JsonFLiteral[F] => {
+                    val parser = jsonBirec.cata(jl.jsonF)(parseAvroDatumAlgebra[M])
+                    parser(typeBirec.project(fieldType))
+                  }
+                }
+
+              } yield FieldDefinition(discoveryTypeTuple._1, AvroRecordFieldMetaData(name, doc, defaultAvroValue, order, aliases), discoveryTypeTuple._2):IntermediateResults
 
               -\/(fldDef)
             }
+
+            case DefaultDefinition() => -\/(
+              json.fields.traverse(
+                f => f(DefaultDefinition()).fold(
+                  lm => lm.flatMap {
+                    case jl:JsonFLiteral[F] => M.pure(jl.jsonF)
+                    case x => M.raiseError[F[JsonF]](InvalidParserState(DefaultDefinition(), "default jsonF of object", x))
+                  },
+                  rm => rm.flatMap(t => M.raiseError[F[JsonF]](InvalidParserState(DefaultDefinition(), "default jsonF of object", t)))
+                )
+              ).map(values => JsonFLiteral(jsonBirec.embed(JsonFObject(values))))
+            )
+
             case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
           }
     }
@@ -473,13 +513,13 @@ object AvroJsonFAlgebras {
       case x::xs => M.raiseError(UnionResolutionError("Could not disambiguate" + selector))
     }
 
-  def parseAvroDatumAlgebra[M[_], F[_[_]]](
+  def parseAvroDatumAlgebra[M[_]](
                                             implicit M:MonadError[M, Throwable],
                                             typeBirec:Birecursive.Aux[Nu[AvroType], AvroType],
-                                            valueBirec:Birecursive.Aux[F[AvroValue[Nu[AvroType], ?]], AvroValue[Nu[AvroType], ?]]
+                                            valueBirec:Birecursive.Aux[Fix[AvroValue[Nu[AvroType], ?]], AvroValue[Nu[AvroType], ?]]
                                           ):Algebra[
                                               JsonF,
-                                              AvroType[Nu[AvroType]] => M[F[AvroValue[Nu[AvroType], ?]]]
+                                              AvroType[Nu[AvroType]] => M[Fix[AvroValue[Nu[AvroType], ?]]]
                                             ] =  {
     case json:JsonFNull[_] => {
       case schema:AvroNullType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroNullValue(schema)))
@@ -492,33 +532,33 @@ object AvroJsonFAlgebras {
         )
           M.pure(
             valueBirec.embed(
-              AvroUnionValue[Nu[AvroType], F[AvroValue[Nu[AvroType], ?]]](
+              AvroUnionValue[Nu[AvroType], Fix[AvroValue[Nu[AvroType], ?]]](
                 schema,
-                valueBirec.embed(AvroNullValue[Nu[AvroType], F[AvroValue[Nu[AvroType], ?]]](AvroNullType[Nu[AvroType]]()))
+                valueBirec.embed(AvroNullValue[Nu[AvroType], Fix[AvroValue[Nu[AvroType], ?]]](AvroNullType[Nu[AvroType]]()))
               )
             )
           )
         else
-          M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnionError(schema, "Found null object at Union position, but Union did not contain null"))
-      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
+          M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnionError(schema, "Found null object at Union position, but Union did not contain null"))
+      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
     case json:JsonFTrue[_] => {
       case schema:AvroBooleanType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroBooleanValue(schema, true)))
-      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
+      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
     case json:JsonFFalse[_] => {
       case schema:AvroBooleanType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroBooleanValue(schema, false)))
-      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
+      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
     case json:JsonFNumberInt[_] => {
       case schema:AvroIntType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroIntValue(schema, json.value)))
       case schema:AvroLongType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroLongValue(schema, json.value))) //FIXME OHOH int maybe too small on jsonF
-      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
+      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
     case json:JsonFNumberDouble[_] => {
       case schema:AvroFloatType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroFloatValue(schema, json.value.toFloat))) //FIXME OHOH 2 shouldn't be an issue but not pretty
       case schema:AvroDoubleType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroDoubleValue(schema, json.value)))
-      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
+      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
     case json:JsonFString[_] => {
       case schema:AvroBytesType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroBytesValue(schema, decodeBytes(json.value))))
@@ -528,30 +568,30 @@ object AvroJsonFAlgebras {
         if (bytes.length == schema.length.value)
           M.pure(valueBirec.embed(AvroFixedValue(schema, bytes)))
         else
-          M.raiseError[F[AvroValue[Nu[AvroType], ?]]](FixedError(schema, bytes.length))
+          M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](FixedError(schema, bytes.length))
       }
       case schema:AvroEnumType[Nu[AvroType]] =>
         if (schema.symbols.map(_.value).contains(json.value))
           M.pure(valueBirec.embed(AvroEnumValue(schema, json.value)))
         else
-          M.raiseError[F[AvroValue[Nu[AvroType], ?]]](EnumError(schema, json.value))
-      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
+          M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](EnumError(schema, json.value))
+      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
-    case json:JsonFArray[AvroType[Nu[AvroType]] => M[F[AvroValue[Nu[AvroType], ?]]]] => {
+    case json:JsonFArray[AvroType[Nu[AvroType]] => M[Fix[AvroValue[Nu[AvroType], ?]]]] => {
       case schema:AvroArrayType[Nu[AvroType]] => json.values.traverse(f => f(expandRecursiveReference(typeBirec.project(schema.items)))).map(elems => valueBirec.embed(AvroArrayValue(schema, elems)))
-      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
+      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
-    case json:JsonFObject[AvroType[Nu[AvroType]] => M[F[AvroValue[Nu[AvroType], ?]]]] => {
+    case json:JsonFObject[AvroType[Nu[AvroType]] => M[Fix[AvroValue[Nu[AvroType], ?]]]] => {
       case schema:AvroMapType[Nu[AvroType]] => json.fields.traverse(f => f(expandRecursiveReference(typeBirec.project(schema.values)))).map(elems => valueBirec.embed(AvroMapValue(schema, elems)))
       case schema:AvroUnionType[Nu[AvroType]] => for {
           member <-
-            json.fields.foldLeft(M.pure(Option.empty[(String, AvroType[Nu[AvroType]] => M[F[AvroValue[Nu[AvroType], ?]]])]))(
+            json.fields.foldLeft(M.pure(Option.empty[(String, AvroType[Nu[AvroType]] => M[Fix[AvroValue[Nu[AvroType], ?]]])]))(
               (optM, elem) => optM.flatMap{
                 case None => M.pure(Some(elem))
-                case Some(_) => M.raiseError[Option[(String, AvroType[Nu[AvroType]] => M[F[AvroValue[Nu[AvroType], ?]]])]](UnionError(schema, "Union representation object must contain exactly 1 field"))
+                case Some(_) => M.raiseError[Option[(String, AvroType[Nu[AvroType]] => M[Fix[AvroValue[Nu[AvroType], ?]]])]](UnionError(schema, "Union representation object must contain exactly 1 field"))
               }
             ).flatMap {
-              case None => M.raiseError[(String, AvroType[Nu[AvroType]] => M[F[AvroValue[Nu[AvroType], ?]]])](UnionError(schema, "Union representation object must contain exactly 1 field"))
+              case None => M.raiseError[(String, AvroType[Nu[AvroType]] => M[Fix[AvroValue[Nu[AvroType], ?]]])](UnionError(schema, "Union representation object must contain exactly 1 field"))
               case Some(x) => M.pure(x)
             }
 
@@ -563,26 +603,36 @@ object AvroJsonFAlgebras {
         } yield valueBirec.embed(union)
       case schema:AvroRecordType[Nu[AvroType]] => {
         val recordFieldNames = schema.fields.keySet.map(_.name)
+        val fieldsWithDefaults = schema.fields.keySet.flatMap(
+          definition => if (definition.default.isDefined) Set(definition.name) else Set.empty[String]
+        )
+        val requiredFieldNames = recordFieldNames -- fieldsWithDefaults
         val jsonFieldNames = json.fields.keySet
 
-        val missingRecFields = recordFieldNames -- jsonFieldNames
+        val missingRecFields = requiredFieldNames -- jsonFieldNames
         val unmappedJsonFields = jsonFieldNames -- recordFieldNames
 
         for {
-          _ <- if (missingRecFields.isEmpty) M.pure(()) else M.raiseError[F[AvroValue[Nu[AvroType], ?]]](RecordError(s"declared Fields $missingRecFields are missing"))
-          _ <- if (unmappedJsonFields.isEmpty) M.pure(()) else M.raiseError[F[AvroValue[Nu[AvroType], ?]]](RecordError(s"jsonFields Fields $unmappedJsonFields have no schema mapping"))
+          _ <- if (missingRecFields.isEmpty) M.pure(()) else M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](RecordError(s"declared Fields $missingRecFields are missing"))
+          _ <- if (unmappedJsonFields.isEmpty) M.pure(()) else M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](RecordError(s"jsonFields Fields $unmappedJsonFields have no schema mapping"))
+          
+          
+          fields <- schema.fields.map(kv => kv._1.name -> (kv._1, expandRecursiveReference(typeBirec.project(kv._2)))).traverse(
+            kv => {
+              M.bind(
+                M.fromEither(
+                  (json.fields.get(kv._1.name).map(f => f(kv._2)) <+> kv._1.default.map(fix => M.pure(fix))).toRight(RecordError(s"schema field ${kv._1} is not on json and has no default"))
+                )
+              )(identity)
+            }
 
-          fldsWithSchema <- schema.fields.map(kv => kv._1.name -> (kv._1.name, expandRecursiveReference(typeBirec.project(kv._2)))).traverse(
-            kv => M.fromEither(json.fields.get(kv._1).toRight(RecordError(s"json field ${kv._1} is not declares on schema"))).map(f => (kv._2 ,f))
           )
-
-          fields <- fldsWithSchema.traverse(tpl => tpl._2(tpl._1))
 
           rec = AvroRecordValue(schema, fields)
 
         } yield valueBirec.embed(rec)
       }
-      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[F[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
+      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
 
   }
@@ -591,19 +641,20 @@ object AvroJsonFAlgebras {
 
 
 
-  def parseDatum[M[_], F[_[_]]](schema:Nu[AvroType])(avroJsonRepr:String)(
+  def parseDatum[M[_]](schema:Nu[AvroType])(avroJsonRepr:String)(
     implicit M:MonadError[M, Throwable],
     typeBirec:Birecursive.Aux[Nu[AvroType], AvroType],
-    valueBirec:Birecursive.Aux[F[AvroValue[Nu[AvroType], ?]], AvroValue[Nu[AvroType], ?]]
-  ):M[F[AvroValue[Nu[AvroType], ?]]] = for {
+    valueBirec:Birecursive.Aux[Fix[AvroValue[Nu[AvroType], ?]], AvroValue[Nu[AvroType], ?]]
+  ):M[Fix[AvroValue[Nu[AvroType], ?]]] = for {
     jsonF <- parseJsonF[M,Fix](avroJsonRepr)
-    resultFunction = jsonF.cata(parseAvroDatumAlgebra[M, F])
+    resultFunction = jsonF.cata(parseAvroDatumAlgebra[M])
     result <- resultFunction(typeBirec.project(schema))
   } yield result
 
   def parseSchema[M[_]](schemaString:String)(
     implicit
     typeBirec:Birecursive.Aux[Nu[AvroType], AvroType],
+    valueBirec:Birecursive.Aux[Fix[AvroValue[Nu[AvroType], ?]], AvroValue[Nu[AvroType], ?]],
     M: MonadError[M, Throwable]
   ):M[Nu[AvroType]] = for {
     jsonF <- parseJsonF[M,Fix](schemaString)

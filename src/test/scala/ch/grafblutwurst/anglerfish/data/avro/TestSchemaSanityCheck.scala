@@ -14,6 +14,8 @@ import matryoshka.data.{Fix, Nu}
 
 object TestSchemaSanityCheck extends Properties("Sanity Check") {
 
+
+
   property("Recursive Schema Check") = {
 
     val schemaString =
@@ -23,7 +25,7 @@ object TestSchemaSanityCheck extends Properties("Sanity Check") {
         |    "type":"record",
         |     "fields":[
         |           {"name":"value", "type":"int"},
-        |           {"name":"tail", "type":["null", "foo"]}
+        |           {"name":"tail", "type":["null", "foo"], "default":null}
         |      ]
         |}
       """.stripMargin
@@ -46,8 +48,7 @@ object TestSchemaSanityCheck extends Properties("Sanity Check") {
         |                  "value":5,
         |                  "tail": {
         |                    "foo" : {
-        |                      "value":6,
-        |                      "tail":null
+        |                      "value":6
         |                    }
         |                  }
         |                }
@@ -65,11 +66,11 @@ object TestSchemaSanityCheck extends Properties("Sanity Check") {
 
     val datum = for {
       schemaNu <- AvroJsonFAlgebras.parseSchema[Either[Throwable, ?]](schemaString)
-      datum <- AvroJsonFAlgebras.parseDatum[Either[Throwable, ?], Fix](schemaNu)(avroJsonString)
+      datum <- AvroJsonFAlgebras.parseDatum[Either[Throwable, ?]](schemaNu)(avroJsonString)
     } yield datum
 
      datum match {
-      case Left(err) => {err.printStackTrace(); false :| "could not decode schema"}
+      case Left(err) => {println(err.toString);err.printStackTrace(); false :| "could not decode schema"}
       case Right(value) => {
         println(value)
         true :| "decode worked"
