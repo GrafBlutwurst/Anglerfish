@@ -6,7 +6,7 @@ import eu.timepit.refined.api.Refined
 import eu.timepit.refined.api.Validate
 import eu.timepit.refined.string._
 import eu.timepit.refined.collection._
-import matryoshka.data.Nu
+import matryoshka.data.{Fix, Nu}
 
 import scala.collection.immutable.{ListMap, ListSet}
 
@@ -59,7 +59,7 @@ object AvroData{
   final case class AvroRecursionType[A](fqn:String, lazyType: A) extends AvroComplexType[A]
 
 
-  final case class AvroRecordFieldMetaData(name:String, doc:Option[String], default:Option[String], order:AvroRecordSortOrder, aliases:OptionalNonEmptySet[AvroFQN]) //FIXME: default should somehow have something to do with the Avro type? does Default work for complex types? e.g. a field that is itself a records? if so how is it represented? JSON encoding? In schema it's a JSON Node. Evaluating that might require the recursive Datatype for instances we still have to do
+  final case class AvroRecordFieldMetaData(name:String, doc:Option[String], default:Option[Fix[AvroValue[Nu[AvroType], ?]]], order:AvroRecordSortOrder, aliases:OptionalNonEmptySet[AvroFQN]) //FIXME: default should somehow have something to do with the Avro type? does Default work for complex types? e.g. a field that is itself a records? if so how is it represented? JSON encoding? In schema it's a JSON Node. Evaluating that might require the recursive Datatype for instances we still have to do
 
   //helpers
   sealed trait AvroRecordSortOrder

@@ -13,16 +13,14 @@ Please be patient quite often I will write code for this library while under con
 
 ## Whats in it right now?
 
-1. Avro schema and Avro Json decoding using matryoshka (so rather than dealing with Generic Record you'll have a proper ADT)
+1. Avro schema and Avro Json decoding using matryoshka (so rather than dealing with Generic Record you'll have a proper ADT) this includes recursive schema and default value support now
 3. InterOp algebras to (un)fold org.apache Schema and underlying generic representaions of data (the actual format depends on the schema you use for decoding. e.g. GenericData.Record for records. Int for the schema "int") 
 2. JsonF pattern functor using circe underneath (this kinda drives 1.)
 
 
 ## What's coming up next (features)
-1. Recursive schema support (as soon as I figure out how to do that)
-2. Default value support for fields in Avro records as AvroValue ADT
-3. Support for different datum parsing mode. Strict so additional fields are not allowed on records. Inclusive so they are and maybe more
-4. Final Tagless Interfaces for :
+1. Support for different datum parsing mode. Strict so additional fields are not allowed on records. Inclusive so they are and maybe more
+2. Final Tagless Interfaces for :
    * HDP / Confluent Schema Registry
    * Kafka
    * Caching wrapping 
@@ -31,9 +29,8 @@ Please be patient quite often I will write code for this library while under con
 ## Things that I need to fix ASAP (bugs etc)
 1. string matching for fieldnames, type names etc.
 2. compiler flags for warnings
-3. generalize interop algebras to any monaderror (it's either right now)
-4. Refactor and clean up the code. remove old code snippets and comments
-5. Error Types
+3. Refactor and clean up the code. remove old code snippets and comments
+4. Error Types
    
    
 ## Things that have to be done sooner or later
