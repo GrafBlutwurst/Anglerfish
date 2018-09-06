@@ -79,6 +79,24 @@ object AvroJsonFAlgebras {
   final case class FieldDefinitions(fields:List[FieldDefinition]) extends IntermediateResults
 
 
+  /*
+  Some explanation is waranted here. So IF we already had dependent functiontypes this algebra would look something like this
+  Algebra[JsonF, AvroParsingContext => AvroParsingContext.Out]
+
+  So this is what's happening here. Due to the nature of schemas (being possibly infinite) you can't quite use a CoAlgebraM because what will happen is Nu[M[A]] => M[Nu[A]] which forces
+  the entire Nu, thus probably running infinitely. Greg Pfeil pointed this out together with the solution https://github.com/sellout/recursion-schemes-cookbook/tree/drafts/AttributeGrammars
+  rather then outputing the result directly in the fold, we output a function from some context to our result type. This allows us to effectively pass parameters INTO the fold.
+
+  Now about the either. We unfold a JsonF into an AvroType which is substentially richer than JsonF. This means we do NOT have 1 to 1 mappings from the members of the JsonF GADT to the AvroType one.
+  Now this means when we traverse through JsonF we have to be aware what we're looking at e.g. a JsonObject has to be a type if it is at the root (type position) or if it's in a property called "type" but
+  on the other hand if it is in a List which is in turn in a property called "fields" it means the object is actually a record field definition.
+
+  This context is expressed in the AvroSchemaParsingContext ADT. Not every of those context will result in a AvroType. which is where the IntermediateResults come into play.
+  So a given step can either return an IntermediateResult or an AvroType. Because this can also have errors it needs to be in some M. This gets us to the below signature
+  now ideally we would have dependent function types, allowing us to express this because in the parseSchema function we call a cata with this algebra and pass the initial state which is
+  TypePosition. The dependent type of TypePosition would be AvroType
+   */
+
   //FIXME error handling
   def parseAvroSchemaAlgebra[M[_], F[_[_]]](implicit M:MonadError[M, Throwable], jsonBirec:Birecursive.Aux[F[JsonF], JsonF], typeBirec:Birecursive.Aux[Nu[AvroType], AvroType], valueBirec:Birecursive.Aux[F[AvroValue[Nu[AvroType], ?]], AvroValue[Nu[AvroType], ?]]):
     Algebra[
