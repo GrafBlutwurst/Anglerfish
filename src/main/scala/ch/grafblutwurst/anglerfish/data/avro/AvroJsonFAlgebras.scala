@@ -69,7 +69,7 @@ object AvroJsonFAlgebras {
   sealed trait IntermediateResults
   final case class NullLiteral() extends IntermediateResults
   final case class BooleanLiteral(b:Boolean) extends IntermediateResults
-  final case class IntLiteral(i:Int) extends IntermediateResults
+  final case class IntLiteral(i:Long) extends IntermediateResults
   final case class DoubleLiteral(d:Double) extends IntermediateResults
   final case class StringLiteral(s:String) extends IntermediateResults
   final case class JsonFLiteral[F[_[_]]](jsonF:F[JsonF]) extends IntermediateResults
@@ -334,7 +334,7 @@ object AvroJsonFAlgebras {
                       }
 
                       length <- fieldAsL(json.fields)("length", "fixed length")(LiteralDefinition()) {
-                        case IntLiteral(i) => refine[Int, Positive](i)
+                        case IntLiteral(i) => refine[Int, Positive](i.toInt)
                       }
 
                       fqn = Util.constructFQN(namespace, name)
@@ -569,7 +569,7 @@ object AvroJsonFAlgebras {
       case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
     case json:JsonFNumberInt[_] => {
-      case schema:AvroIntType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroIntValue(schema, json.value)))
+      case schema:AvroIntType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroIntValue(schema, json.value.toInt))) //FIXME OH GOD NO
       case schema:AvroLongType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroLongValue(schema, json.value))) //FIXME OHOH int maybe too small on jsonF
       case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }

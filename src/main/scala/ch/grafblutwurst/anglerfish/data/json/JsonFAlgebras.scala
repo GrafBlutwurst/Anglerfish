@@ -9,6 +9,7 @@ import io.circe.parser._
 import io.circe._
 import ch.grafblutwurst.anglerfish.core.scalaZExtensions.MonadErrorSyntax._
 import ch.grafblutwurst.anglerfish.data.json.implicits._
+
 import scala.collection.immutable.ListMap
 
 
@@ -22,7 +23,7 @@ object JsonFAlgebras {
     case cursor:ACursor if cursor.focus.exists(_.isBoolean) => asM[M, Boolean](cursor).map(x => if (x) JsonFTrue() else JsonFFalse())
     case cursor:ACursor if cursor.focus.exists(_.isNumber) => for {
       jsonNumber <- asM[M, JsonNumber](cursor)
-      element = jsonNumber.toInt.map(JsonFNumberInt[ACursor](_)).getOrElse(JsonFNumberDouble[ACursor](jsonNumber.toDouble))
+      element = jsonNumber.toLong.map(JsonData.JsonFNumberInt[ACursor](_)).getOrElse(JsonFNumberDouble[ACursor](jsonNumber.toDouble))
     } yield element
     case cursor:ACursor if cursor.focus.exists(_.isArray) => for {
       values <- M.fromEither(cursor.values.toRight(DecodingFailure("Was Not actually an Array", cursor.history)))

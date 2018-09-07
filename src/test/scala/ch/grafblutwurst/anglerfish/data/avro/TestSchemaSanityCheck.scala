@@ -8,9 +8,11 @@ import org.scalacheck.Properties
 import matryoshka._
 import matryoshka.implicits._
 import ch.grafblutwurst.anglerfish.data.avro.AvroData._
+import ch.grafblutwurst.anglerfish.data.avro.AvroJsonFAlgebras.UnexpectedTypeError
 import ch.grafblutwurst.anglerfish.data.avro.implicits._
 import matryoshka.data.{Fix, Nu}
 
+import scala.io.Source
 
 object TestSchemaSanityCheck extends Properties("Sanity Check") {
 
@@ -78,5 +80,8 @@ object TestSchemaSanityCheck extends Properties("Sanity Check") {
     }
 
   }
+
+
+ 
 
 }

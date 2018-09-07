@@ -11,7 +11,7 @@ object JsonData {
   final case class JsonFArray[A](values:List[A]) extends JsonF[A]
   final case class JsonFObject[A](fields:ListMap[String, A]) extends JsonF[A]
   final case class JsonFNumberDouble[A](value:Double) extends JsonF[A]
-  final case class JsonFNumberInt[A](value:Int) extends JsonF[A]
+  final case class JsonFNumberInt[A](value:Long) extends JsonF[A]
   final case class JsonFString[A](value:String) extends JsonF[A]
 
 }
