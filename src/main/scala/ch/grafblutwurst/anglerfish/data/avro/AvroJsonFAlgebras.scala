@@ -623,7 +623,7 @@ object AvroJsonFAlgebras {
     case json:JsonFNumberBigInt[_] => _ => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnrepresentableError(json))
     case json:JsonFNumberDouble[_] => {
       case schema:AvroFloatType[Nu[AvroType]] =>
-        if (json.value <= Float.MaxValue && json.value >= Float.MinValue) //FIXME this doesn't feel right. will this actually yield sensible floats always?
+        if (json.value == json.value.toFloat.toDouble) //FIXME this doesn't feel right. will this actually yield sensible floats always?
           M.pure(valueBirec.embed(AvroFloatValue(schema, json.value.toFloat)))
         else
           M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, schema))
