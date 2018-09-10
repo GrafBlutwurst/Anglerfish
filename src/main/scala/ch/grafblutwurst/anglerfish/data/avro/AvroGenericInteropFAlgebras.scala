@@ -305,7 +305,7 @@ object AvroGenericInteropFAlgebras {
             case ARSOAscending => Schema.Field.Order.ASCENDING
             case ARSODescending => Schema.Field.Order.DESCENDING
           }
-          val fldInstance = new Schema.Field(elemMeta.name, elemSchema, elemMeta.doc.orNull, elemMeta.default.orNull, sortOrder)
+          val fldInstance = new Schema.Field(elemMeta.name, elemSchema, elemMeta.doc.orNull, elemMeta.default.map(_.cataM[M, Any](avroValueToGenericRepr)).getOrElse(M.pure(null)), sortOrder)
           elemMeta.aliases.foreach(
             _.foreach(alias => fldInstance.addAlias(alias.value))
           )
