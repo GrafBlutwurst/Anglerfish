@@ -39,6 +39,7 @@ object AvroJsonFAlgebras {
   final case class RecordError(reason:String) extends AvroDatumError
   final case class FixedError(expected:AvroFixedType[Nu[AvroType]], encounteredLength:Int) extends AvroDatumError
   final case class UnexpectedTypeError(base:JsonF[_], contextSchema: AvroType[Nu[AvroType]]) extends AvroDatumError
+  final case class UnrepresentableError(base:JsonF[_]) extends AvroDatumError
 
 
   sealed trait AvroSchemaErrors extends AvroError
@@ -69,7 +70,12 @@ object AvroJsonFAlgebras {
   sealed trait IntermediateResults
   final case class NullLiteral() extends IntermediateResults
   final case class BooleanLiteral(b:Boolean) extends IntermediateResults
-  final case class IntLiteral(i:Long) extends IntermediateResults
+  final case class BigIntLiteral(i:BigInt) extends IntermediateResults
+  final case class LongLiteral(i:Long) extends IntermediateResults
+  final case class IntLiteral(i:Int) extends IntermediateResults
+  final case class ShortLiteral(i:Short) extends IntermediateResults
+  final case class ByteLiteral(i:Byte) extends IntermediateResults
+  final case class BigDecimalLiteral(i:BigDecimal) extends IntermediateResults
   final case class DoubleLiteral(d:Double) extends IntermediateResults
   final case class StringLiteral(s:String) extends IntermediateResults
   final case class JsonFLiteral[F[_[_]]](jsonF:F[JsonF]) extends IntermediateResults
@@ -212,14 +218,39 @@ object AvroJsonFAlgebras {
             case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFFalse[F[JsonF]]()))))
             case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
           }
+          case json:JsonFNumberBigDecimal[Out]    =>  {
+            case LiteralDefinition() => -\/(M.pure(BigDecimalLiteral(json.value)))
+            case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberBigDecimal[F[JsonF]](json.value)))))
+            case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
+          }
           case json:JsonFNumberDouble[Out] =>  {
             case LiteralDefinition() => -\/(M.pure(DoubleLiteral(json.value)))
             case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberDouble[F[JsonF]](json.value)))))
             case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
           }
+          case json:JsonFNumberBigInt[Out]    =>  {
+            case LiteralDefinition() => -\/(M.pure(BigIntLiteral(json.value)))
+            case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberBigInt[F[JsonF]](json.value)))))
+            case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
+          }
+          case json:JsonFNumberLong[Out]    =>  {
+            case LiteralDefinition() => -\/(M.pure(LongLiteral(json.value)))
+            case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberLong[F[JsonF]](json.value)))))
+            case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
+          }
           case json:JsonFNumberInt[Out]    =>  {
             case LiteralDefinition() => -\/(M.pure(IntLiteral(json.value)))
             case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberInt[F[JsonF]](json.value)))))
+            case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
+          }
+          case json:JsonFNumberShort[Out]    =>  {
+            case LiteralDefinition() => -\/(M.pure(ShortLiteral(json.value)))
+            case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberShort[F[JsonF]](json.value)))))
+            case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
+          }
+          case json:JsonFNumberByte[Out]    =>  {
+            case LiteralDefinition() => -\/(M.pure(ByteLiteral(json.value)))
+            case DefaultDefinition() => -\/(M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberByte[F[JsonF]](json.value)))))
             case context: AvroSchemaParsingContext => \/-(M.raiseError(UnexpectedJsonType(json, context)))
           }
           case json:JsonFString[Out]       =>  {
@@ -334,7 +365,9 @@ object AvroJsonFAlgebras {
                       }
 
                       length <- fieldAsL(json.fields)("length", "fixed length")(LiteralDefinition()) {
-                        case IntLiteral(i) => refine[Int, Positive](i.toInt)
+                        case IntLiteral(i) => refine[Int, Positive](i)
+                        case ShortLiteral(i) => refine[Int, Positive](i)
+                        case ByteLiteral(i) => refine[Int, Positive](i)
                       }
 
                       fqn = Util.constructFQN(namespace, name)
@@ -568,16 +601,36 @@ object AvroJsonFAlgebras {
       case schema:AvroBooleanType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroBooleanValue(schema, false)))
       case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
-    case json:JsonFNumberInt[_] => {
-      case schema:AvroIntType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroIntValue(schema, json.value.toInt))) //FIXME OH GOD NO
-      case schema:AvroLongType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroLongValue(schema, json.value))) //FIXME OHOH int maybe too small on jsonF
+    case json:JsonFNumberByte[_] => {
+      case schema:AvroLongType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroLongValue(schema, json.value)))
+      case schema:AvroIntType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroIntValue(schema, json.value)))
       case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
+    case json:JsonFNumberShort[_] => {
+      case schema:AvroLongType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroLongValue(schema, json.value)))
+      case schema:AvroIntType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroIntValue(schema, json.value)))
+      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
+    }
+    case json:JsonFNumberInt[_] => {
+      case schema:AvroLongType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroLongValue(schema, json.value)))
+      case schema:AvroIntType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroIntValue(schema, json.value)))
+      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
+    }
+    case json:JsonFNumberLong[_] => {
+      case schema:AvroLongType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroLongValue(schema, json.value)))
+      case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
+    }
+    case json:JsonFNumberBigInt[_] => _ => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnrepresentableError(json))
     case json:JsonFNumberDouble[_] => {
-      case schema:AvroFloatType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroFloatValue(schema, json.value.toFloat))) //FIXME OHOH 2 shouldn't be an issue but not pretty
+      case schema:AvroFloatType[Nu[AvroType]] =>
+        if (json.value <= Float.MaxValue && json.value >= Float.MinValue) //FIXME this doesn't feel right. will this actually yield sensible floats always?
+          M.pure(valueBirec.embed(AvroFloatValue(schema, json.value.toFloat)))
+        else
+          M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, schema))
       case schema:AvroDoubleType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroDoubleValue(schema, json.value)))
       case errSchema:AvroType[Nu[AvroType]] => M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnexpectedTypeError(json, errSchema))
     }
+    case json:JsonFNumberBigDecimal[_] => _ =>  M.raiseError[Fix[AvroValue[Nu[AvroType], ?]]](UnrepresentableError(json))
     case json:JsonFString[_] => {
       case schema:AvroBytesType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroBytesValue(schema, decodeBytes(json.value))))
       case schema:AvroStringType[Nu[AvroType]] => M.pure(valueBirec.embed(AvroStringValue(schema, json.value)))

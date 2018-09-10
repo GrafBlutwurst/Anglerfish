@@ -13,6 +13,7 @@ import ch.grafblutwurst.anglerfish.data.json.implicits._
 import scala.collection.immutable.ListMap
 
 
+
 object JsonFAlgebras {
 
   private def asM[M[_], T: Decoder](cursor:ACursor)(implicit M: MonadError[M, Throwable]):M[T] = M.fromEither(cursor.as[T])
@@ -23,7 +24,28 @@ object JsonFAlgebras {
     case cursor:ACursor if cursor.focus.exists(_.isBoolean) => asM[M, Boolean](cursor).map(x => if (x) JsonFTrue() else JsonFFalse())
     case cursor:ACursor if cursor.focus.exists(_.isNumber) => for {
       jsonNumber <- asM[M, JsonNumber](cursor)
-      element = jsonNumber.toLong.map(JsonData.JsonFNumberInt[ACursor](_)).getOrElse(JsonFNumberDouble[ACursor](jsonNumber.toDouble))
+
+      optByte = jsonNumber.toByte.map(JsonData.JsonFNumberByte[ACursor])
+      optShort = jsonNumber.toShort.map(JsonData.JsonFNumberShort[ACursor])
+      optInt = jsonNumber.toInt.map(JsonData.JsonFNumberInt[ACursor])
+      optLong = jsonNumber.toLong.map(JsonData.JsonFNumberLong[ACursor])
+      optBigInt = jsonNumber.toBigInt.map(JsonData.JsonFNumberBigInt[ACursor])
+
+
+      optFloatingPoint = jsonNumber.toBigDecimal.map(
+        x => if (x < Double.MaxValue && x > Double.MinValue) JsonData.JsonFNumberDouble[ACursor](x.toDouble) else JsonData.JsonFNumberBigDecimal[ACursor](x)
+      )
+
+      elementOpt =
+        optByte.map(x => x:JsonF[ACursor]) <+>
+        optShort.map(x => x:JsonF[ACursor]) <+>
+        optInt.map(x => x:JsonF[ACursor]) <+>
+        optLong.map(x => x:JsonF[ACursor]) <+>
+        optBigInt.map(x => x:JsonF[ACursor]) <+>
+        optFloatingPoint.map(x => x:JsonF[ACursor])
+
+      element <- elementOpt.map(x => M.pure(x)).getOrElse(M.raiseError[JsonF[ACursor]](new RuntimeException("Could not find smallest numeric type for cursor")))
+
     } yield element
     case cursor:ACursor if cursor.focus.exists(_.isArray) => for {
       values <- M.fromEither(cursor.values.toRight(DecodingFailure("Was Not actually an Array", cursor.history)))
