@@ -3,7 +3,7 @@ import sbtassembly.MergeStrategy
 organization := "ch.grafblutwurst"
 name := "anglerfish"
 
-version := "0.1.4"
+version := "0.1.5"
 
 crossScalaVersions := Seq("2.11.8", "2.12.4")
 
