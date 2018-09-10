@@ -295,8 +295,8 @@ object AvroGenericInteropFAlgebras {
     case AvroBytesType() => M.pure(Schema.create(Schema.Type.BYTES))
     case AvroStringType() => M.pure(Schema.create(Schema.Type.STRING))
     case rec:AvroRecordType[Schema] => {
-      val flds = rec.fields.foldRight(List.empty[Schema.Field]) (
-        (elemKv, lst) => {
+      val flds = rec.fields.foldRight(M.pure(List.empty[Schema.Field])) (
+        (elemKv, lstM) => lstM.flatMap( lst => {
           val elemMeta = elemKv._1
           val elemSchema = elemKv._2
 
@@ -305,22 +305,31 @@ object AvroGenericInteropFAlgebras {
             case ARSOAscending => Schema.Field.Order.ASCENDING
             case ARSODescending => Schema.Field.Order.DESCENDING
           }
-          val fldInstance = new Schema.Field(elemMeta.name, elemSchema, elemMeta.doc.orNull, elemMeta.default.map(_.cataM[M, Any](avroValueToGenericRepr)).getOrElse(M.pure(null)), sortOrder)
-          elemMeta.aliases.foreach(
-            _.foreach(alias => fldInstance.addAlias(alias.value))
+          elemMeta.default.map(_.cataM[M, Any](avroValueToGenericRepr)).getOrElse(M.pure(null)).map(
+            default => {
+              val fldInstance = new Schema.Field(elemMeta.name, elemSchema, elemMeta.doc.orNull, default, sortOrder)
+              elemMeta.aliases.foreach(
+                _.foreach(alias => fldInstance.addAlias(alias.value))
+              )
+              fldInstance :: lst
+            }
           )
-          fldInstance :: lst
+        }
+        )
+      )
+
+      flds.flatMap(
+        fields => {
+          M.tryThunk {
+            val schemaInstance = Schema.createRecord(rec.name, rec.doc.orNull, rec.namespace.map(_.value).orNull, false, fields.asJava)
+            rec.aliases.foreach(
+              _.foreach(alias => schemaInstance.addAlias(alias.value))
+            )
+            schemaInstance
+          }
         }
       )
 
-
-      M.tryThunk {
-        val schemaInstance = Schema.createRecord(rec.name, rec.doc.orNull, rec.namespace.map(_.value).orNull, false, flds.asJava)
-        rec.aliases.foreach(
-          _.foreach(alias => schemaInstance.addAlias(alias.value))
-        )
-        schemaInstance
-      }
     }
     case enum:AvroEnumType[_] => {
       M.tryThunk {
