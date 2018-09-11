@@ -59,7 +59,16 @@ object AvroGenericInteropFAlgebras {
     } yield t
     
 
-  def avroTypeToGenericSchema[M[_]: MonadError[?[_], Throwable]](avroType: Nu[AvroType]):M[Schema] =  avroType.cataM(avroTypeToSchema[M])
+  def avroTypeToGenericSchema[M[_]](avroType: Nu[AvroType])(implicit M: MonadError[M, Throwable], birec:Birecursive.Aux[Nu[AvroType], AvroType]):M[Schema] =  {
+    val nuTruncated = birec.transAnaT(avroType)(
+        (nu:Nu[AvroType]) => birec.project(nu) match {
+          case AvroRecursionType(fqn, _) => birec.embed(AvroRecursionType(fqn, birec.embed(AvroNullType[Nu[AvroType]]())))
+          case x:AvroType[Nu[AvroType]] => birec.embed(x)
+        }
+      )
+    val f: Map[String,Schema] => M[(Map[String,Schema], Schema)] = birec.cata(nuTruncated)(avroTypeToSchema[M])
+    f(Map.empty[String, Schema]).map(_._2)
+  }
 
 
   private[this] def handleAvroAliasesJavaSet[M[_], A, P](jSetO: java.util.Set[A])(implicit M:MonadError[M, Throwable], validateEv:Validate[A,P]): M[OptionalNonEmptySet[A Refined P]] = {
@@ -284,71 +293,85 @@ object AvroGenericInteropFAlgebras {
   /**
     * This Algebra allows to fold a AvroType back down to a schema. so that a hylomorphism with avroSchemaToInternalType should yield the same schema again
   **/
-  def avroTypeToSchema[M[_]](implicit M:MonadError[M, Throwable]):AlgebraM[M, AvroType, Schema] = (avroType:AvroType[Schema]) => avroType match {
-    case AvroRecursionType(_, _) => M.raiseError(new NotImplementedError("Recursive References in Avro Schema folding not yet supported"))
-    case AvroNullType() => M.pure(Schema.create(Schema.Type.NULL))
-    case AvroBooleanType() => M.pure(Schema.create(Schema.Type.BOOLEAN))
-    case AvroIntType() => M.pure(Schema.create(Schema.Type.INT))
-    case AvroLongType() => M.pure(Schema.create(Schema.Type.LONG))
-    case AvroFloatType() => M.pure(Schema.create(Schema.Type.FLOAT))
-    case AvroDoubleType() => M.pure(Schema.create(Schema.Type.DOUBLE))
-    case AvroBytesType() => M.pure(Schema.create(Schema.Type.BYTES))
-    case AvroStringType() => M.pure(Schema.create(Schema.Type.STRING))
-    case rec:AvroRecordType[Schema] => {
-      val flds = rec.fields.foldRight(M.pure(List.empty[Schema.Field])) (
-        (elemKv, lstM) => lstM.flatMap( lst => {
-          val elemMeta = elemKv._1
-          val elemSchema = elemKv._2
+  def avroTypeToSchema[M[_]](implicit M:MonadError[M, Throwable]):Algebra[AvroType, Map[String,Schema] => M[(Map[String,Schema], Schema)] ] = {
+    case AvroRecursionType(fqn, _) => refs => refs
+      .get(fqn)
+      .map(schema => M.pure(refs -> schema))
+      .getOrElse(M.raiseError[(Map[String,Schema], Schema)](new RuntimeException(s"not found $fqn in ${refs.keySet}")))
+    case AvroNullType() => refs => M.pure(refs -> Schema.create(Schema.Type.NULL))
+    case AvroBooleanType() => refs => M.pure(refs -> Schema.create(Schema.Type.BOOLEAN))
+    case AvroIntType() => refs => M.pure(refs -> Schema.create(Schema.Type.INT))
+    case AvroLongType() => refs => M.pure(refs -> Schema.create(Schema.Type.LONG))
+    case AvroFloatType() => refs => M.pure(refs -> Schema.create(Schema.Type.FLOAT))
+    case AvroDoubleType() => refs => M.pure(refs -> Schema.create(Schema.Type.DOUBLE))
+    case AvroBytesType() => refs => M.pure(refs -> Schema.create(Schema.Type.BYTES))
+    case AvroStringType() => refs => M.pure(refs -> Schema.create(Schema.Type.STRING))
+    case rec:AvroRecordType[Map[String,Schema] => M[(Map[String,Schema], Schema)]] => refs =>   for {
+      //Warning local mutability
+      schemaInstance <- M.tryThunk { Schema.createRecord(rec.name, rec.doc.orNull, rec.namespace.map(_.value).orNull, false) }
+      newRefs = refs + (Util.constructFQN(rec.namespace, rec.name).value -> schemaInstance)
+      fldRefs <-
+        rec.fields.foldRight(M.pure((newRefs, List.empty[Schema.Field]))) (
+          (elemKv, tplM) => for {
+            tpl <- tplM
+            currentRefs = tpl._1
+            lst = tpl._2
+            elemMeta = elemKv._1
+            elemDiscovery <- elemKv._2(currentRefs)
+            elemDiscoveredSchemata = elemDiscovery._1
+            elemSchema = elemDiscovery._2
 
-          val sortOrder = elemMeta.order match {
-            case ARSOIgnore => Schema.Field.Order.IGNORE
-            case ARSOAscending => Schema.Field.Order.ASCENDING
-            case ARSODescending => Schema.Field.Order.DESCENDING
-          }
-          elemMeta.default.map(_.cataM[M, Any](avroValueToGenericRepr)).getOrElse(M.pure(null)).map(
-            default => {
-              val fldInstance = new Schema.Field(elemMeta.name, elemSchema, elemMeta.doc.orNull, default, sortOrder)
-              elemMeta.aliases.foreach(
-                _.foreach(alias => fldInstance.addAlias(alias.value))
-              )
-              fldInstance :: lst
+            sortOrder = elemMeta.order match {
+              case ARSOIgnore => Schema.Field.Order.IGNORE
+              case ARSOAscending => Schema.Field.Order.ASCENDING
+              case ARSODescending => Schema.Field.Order.DESCENDING
             }
-          )
-        }
-        )
-      )
 
-      flds.flatMap(
-        fields => {
-          M.tryThunk {
-            val schemaInstance = Schema.createRecord(rec.name, rec.doc.orNull, rec.namespace.map(_.value).orNull, false, fields.asJava)
-            rec.aliases.foreach(
-              _.foreach(alias => schemaInstance.addAlias(alias.value))
+            defaultValue <- elemMeta.default.map(_.cataM[M, Any](avroValueToGenericRepr)).getOrElse(M.pure(null))
+
+            fldInstance = new Schema.Field(elemMeta.name, elemSchema, elemMeta.doc.orNull, defaultValue, sortOrder)
+            _ = elemMeta.aliases.foreach(
+              _.foreach(alias => fldInstance.addAlias(alias.value))
             )
-            schemaInstance
-          }
-        }
-      )
 
-    }
-    case enum:AvroEnumType[_] => {
+            processedFields = fldInstance :: lst
+          } yield (elemDiscoveredSchemata, processedFields)
+        )
+
+      _ = schemaInstance.setFields(fldRefs._2.asJava)
+    } yield (fldRefs._1, schemaInstance)
+    case enum:AvroEnumType[_] => refs => {
       M.tryThunk {
         val schemaInstance = Schema.createEnum(enum.name, enum.doc.orNull, enum.namespace.map(_.value).getOrElse(""), enum.symbols.toList.map(_.value).asJava)
           enum.aliases.foreach(
             _.foreach(alias => schemaInstance.addAlias(alias.value))
           )
-        schemaInstance
+        ((refs + (Util.constructFQN(enum.namespace, enum.name).value -> schemaInstance)), schemaInstance)
       }
     }
-    case arr:AvroArrayType[Schema] => M.pure(Schema.createArray(arr.items))
-    case map:AvroMapType[Schema] => M.pure(Schema.createMap(map.values))
-    case unionT:AvroUnionType[Schema] => M.pure(Schema.createUnion(unionT.members.asJava))
-    case fixed:AvroFixedType[_] => M.tryThunk{
+    case arr:AvroArrayType[Map[String,Schema] => M[(Map[String,Schema], Schema)]] => refs => arr.items(refs).map(tpl => (tpl._1, Schema.createArray(tpl._2)))
+    case map:AvroMapType[Map[String,Schema] => M[(Map[String,Schema], Schema)]] => refs => map.values(refs).map(tpl => (tpl._1, Schema.createMap(tpl._2)))
+    case unionT:AvroUnionType[Map[String,Schema] => M[(Map[String,Schema], Schema)]] => refs => for {
+      memberDiscovery <- unionT.members.foldRight(M.pure((refs, List.empty[Schema])))(
+        (memberF, tplM) => for {
+          tpl <- tplM
+          currentRefs = tpl._1
+          currentList = tpl._2
+          discovery <- memberF(currentRefs)
+          newRefs = discovery._1
+          memberSchema = discovery._2
+        } yield (newRefs, memberSchema :: currentList)
+      )
+
+      newRefs = memberDiscovery._1
+      members = memberDiscovery._2.asJava
+    } yield (newRefs, Schema.createUnion(members))
+    case fixed:AvroFixedType[_] => refs => M.tryThunk{
       val schemaInstance = Schema.createFixed(fixed.name, fixed.doc.orNull, fixed.namespace.map(_.value).getOrElse(""), fixed.length.value)
       fixed.aliases.foreach(
         _.foreach(alias => schemaInstance.addAlias(alias.value))
       )
-      schemaInstance
+      ((refs + (Util.constructFQN(fixed.namespace, fixed.name).value -> schemaInstance)), schemaInstance)
     }
   }
 
@@ -367,22 +390,22 @@ object AvroGenericInteropFAlgebras {
     case AvroBytesValue(_ , bs) => M.pure(bs.toArray)
     case AvroStringValue(_, s) => M.tryThunk { new org.apache.avro.util.Utf8(s) }
     case AvroRecordValue(schema, flds) => for {
-      avroSchema <- birec.cataM(birec.embed(schema))(avroTypeToSchema(M))
+      avroSchema <- avroTypeToGenericSchema(birec.embed(schema))(M, birec)
       genRec <- M.tryThunk { new GenericData.Record(avroSchema) }
     } yield flds.foldLeft(genRec)( (rec, fld) => {rec.put(fld._1, fld._2); rec})
     case AvroEnumValue(schema, symbol) => for {
-      avroSchema <- birec.cataM(birec.embed(schema))(avroTypeToSchema(M))
+      avroSchema <- avroTypeToGenericSchema(birec.embed(schema))(M, birec)
       genEnum <- M.tryThunk { new GenericData.EnumSymbol(avroSchema, symbol) }
     } yield genEnum
       //new GenericData.Array(birec.cata(birec.embed(schema))(avroTypeToSchema), items.asJava)
     case AvroArrayValue(schema, items) => for {
-      avroSchema <- birec.cataM(birec.embed(schema))(avroTypeToSchema(M))
+      avroSchema <- avroTypeToGenericSchema(birec.embed(schema))(M, birec)
       genArray <- M.tryThunk { new GenericData.Array(avroSchema, items.asJava) }
     } yield genArray
     case AvroMapValue(_, values) =>  M.pure(values.asJava)
     case AvroUnionValue(_, member) => M.pure(member)
     case AvroFixedValue(schema, bytes) => for {
-      avroSchema <- birec.cataM(birec.embed(schema))(avroTypeToSchema(M))
+      avroSchema <- avroTypeToGenericSchema(birec.embed(schema))(M, birec)
       genArray <- M.tryThunk { new GenericData.Fixed(avroSchema, bytes.toArray) }
     } yield genArray
   }
