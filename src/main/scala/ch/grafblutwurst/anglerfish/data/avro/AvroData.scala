@@ -6,57 +6,16 @@ import eu.timepit.refined.api.Refined
 import eu.timepit.refined.api.Validate
 import eu.timepit.refined.string._
 import eu.timepit.refined.collection._
-import matryoshka.data.Nu
+import matryoshka.data.{Fix, Nu}
 
 import scala.collection.immutable.{ListMap, ListSet}
 
 
 object AvroData{
 
-  //Required Refinements
-  final case class AvroValidUnion()
-
-  /**
-    * This makes sure that a List of AvroTypes actually forms a valid Union as defined in
-    *  https://avro.apache.org/docs/1.8.1/spec.html#Unions
-  **/
- /* implicit def validateUnionMembers[F[_[_]]](implicit birec:Birecursive.Aux[F[AvroType], AvroType]): Validate.Plain[List[F[AvroType]], AvroValidUnion] = //TODO: Figure out how to apply this
-    Validate.fromPredicate(
-      lstF =>{
-        val lst = lstF.map(birec.project(_))
-        lst.filter{ case AvroUnionType(_) => true }.length == 0 && // avro unions may not contain any other unions directly
-        lst.map{ 
-          case AvroNullType() => 1
-          case AvroBooleanType() => 2
-          case AvroIntType() => 3
-          case AvroLongType() => 4
-          case AvroFloatType() => 5
-          case AvroDoubleType() => 6
-          case AvroBytesType() => 7
-          case AvroStringType() => 8
-          case _: AvroMapType[_] => 9
-          case _: AvroArrayType[_] => 10
-          case _ => 0
-        }
-          .filter( _> 0)
-          .groupBy(identity)
-          .forall(_._2.length == 1) && // make sure there are no non-named avro typed double in the union
-        lst.map{ 
-          case rec: AvroRecordType[_] => (rec.namespace, rec.name)
-          case enum: AvroEnumType[_] => (enum.namespace, enum.name)
-          case fixed:AvroFixedType[_] => (fixed.namespace, fixed.name)
-          case _ => ("", "")
-        }
-          .filter( tp => tp._1 != "" && tp._2 != "")
-          .groupBy(identity)
-          .forall(_._2 == 1) // make sure that named members (enums, fixed and records) do not appear more than once
-      },
-      lst => s"$lst is a valid list of union members", 
-      AvroValidUnion()
-    )*/
-
   //Avro Types required to represent Schemata
   //TODO: extend with logical types and arbitraty properties
+  //FIXME: Something saner than Vector[]
 
 
   type AvroValidName = MatchesRegex[W.`"[A-Za-z_][A-Za-z0-9_]*"`.T]
@@ -100,7 +59,7 @@ object AvroData{
   final case class AvroRecursionType[A](fqn:String, lazyType: A) extends AvroComplexType[A]
 
 
-  final case class AvroRecordFieldMetaData(name:String, doc:Option[String], default:Option[String], order:AvroRecordSortOrder, aliases:OptionalNonEmptySet[AvroFQN]) //FIXME: default should somehow have something to do with the Avro type? does Default work for complex types? e.g. a field that is itself a records? if so how is it represented? JSON encoding? In schema it's a JSON Node. Evaluating that might require the recursive Datatype for instances we still have to do
+  final case class AvroRecordFieldMetaData(name:String, doc:Option[String], default:Option[Fix[AvroValue[Nu[AvroType], ?]]], order:AvroRecordSortOrder, aliases:OptionalNonEmptySet[AvroFQN]) //FIXME: default should somehow have something to do with the Avro type? does Default work for complex types? e.g. a field that is itself a records? if so how is it represented? JSON encoding? In schema it's a JSON Node. Evaluating that might require the recursive Datatype for instances we still have to do
 
   //helpers
   sealed trait AvroRecordSortOrder
@@ -110,7 +69,9 @@ object AvroData{
 
 
 
-  sealed trait AvroValue[S, A]
+  sealed trait AvroValue[S, A]{
+    val schema:AvroType[S]
+  }
 
   sealed trait AvroPrimitiveValue[S, A] extends AvroValue[S, A]
   final case class AvroNullValue[S, A](schema:AvroNullType[S]) extends AvroPrimitiveValue[S, A]
