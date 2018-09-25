@@ -11,7 +11,8 @@ import ch.grafblutwurst.anglerfish.data.avro.implicits._
 import ch.grafblutwurst.anglerfish.data.json.implicits._
 import ch.grafblutwurst.anglerfish.core.scalaZExtensions.MonadErrorSyntax._
 import ch.grafblutwurst.anglerfish.core.stdLibExtensions.ListSyntax._
-import matryoshka.{Algebra, Birecursive, Coalgebra}
+import ch.grafblutwurst.anglerfish.data.avro.AvroJsonFAlgebras.ParsingContext.HistEntry
+import matryoshka.{Algebra, Birecursive, Coalgebra, Corecursive, Recursive}
 import matryoshka.implicits._
 import eu.timepit.refined.api.{Refined, Validate}
 import eu.timepit.refined.auto._
@@ -23,7 +24,7 @@ import matryoshka.data.Nu
 import matryoshka.data.Fix
 import ch.grafblutwurst.anglerfish.data.json.JsonData._
 
-import scala.collection.immutable.{ListMap, ListSet}
+import scala.collection.immutable.{ListMap, ListSet, Queue, Stack}
 
 object AvroJsonFAlgebras {
   
@@ -43,10 +44,9 @@ object AvroJsonFAlgebras {
 
 
   sealed trait AvroSchemaErrors extends AvroError
-  final case class UnexpectedJsonType(jsonElement:JsonF[_], parsingContext: ParsingContext) extends AvroSchemaErrors
   final case class UnkownSchemaReference(errorReference:String, knownReferences: Set[String]) extends AvroSchemaErrors
-  final case class UnexpectedParsingResult() extends AvroSchemaErrors
-  final case class InvalidParserState[T](parserContext:ParsingContext, expected:String, got:T) extends AvroSchemaErrors
+  final case class UnexpectedParsingResult[T](dispatchingContext:ParsingContext, expected:String, got:T) extends AvroSchemaErrors
+  final case class InvalidParserState(parserContext:ParsingContext, validStates:Set[String]) extends AvroSchemaErrors
   final case class UnknownFieldError(field:String, available:Set[String]) extends AvroSchemaErrors
   final case class RefinementError(error:String) extends AvroSchemaErrors
   final case class UnknownSortOrder(error:String) extends AvroSchemaErrors
@@ -55,15 +55,37 @@ object AvroJsonFAlgebras {
 
   private[this] def decodeBytes(s:String):Vector[Byte] = Base64.getDecoder.decode(s).toVector
 
-  sealed trait ParsingContext
-  final case class TypePosition(parentTypes:Set[String], schemaReferences:Map[String, Nu[AvroType]]) extends ParsingContext
-  final case class RecordFieldDefinition(parentTypes:Set[String], schemaReferences:Map[String, Nu[AvroType]]) extends ParsingContext
-  final case class RecordFieldListDefinition(parentTypes:Set[String], schemaReferences:Map[String, Nu[AvroType]]) extends ParsingContext
-  final case class DefaultDefinition() extends ParsingContext
-  final case class LiteralDefinition() extends ParsingContext
-  final case class AliasesDefinition() extends ParsingContext
-  final case class DefaultValueDefition() extends ParsingContext
-  final case class EnumSymbolDefinition() extends ParsingContext
+  sealed trait ParsingContext {
+    val history: List[HistEntry]
+    val encolsingNamespace: List[AvroNamespace]
+  }
+  object ParsingContext{
+    final case class HistEntry(context:ParsingContext, jsonF: JsonF[_])
+
+    def root(implicit typeCorec:Corecursive.Aux[Nu[AvroType], AvroType[?]]) = TypePosition(
+      List.empty[HistEntry],
+      List.empty[AvroNamespace],
+      Set.empty[String],
+      Map(
+        "null" -> typeCorec.embed(AvroNullType()),
+        "boolean" -> typeCorec.embed(AvroBooleanType()),
+        "int" -> typeCorec.embed(AvroIntType()),
+        "long" -> typeCorec.embed(AvroLongType()),
+        "float" -> typeCorec.embed(AvroFloatType()),
+        "double" -> typeCorec.embed(AvroDoubleType()),
+        "bytes" -> typeCorec.embed(AvroBytesType()),
+        "string" -> typeCorec.embed(AvroStringType())
+      )
+    )
+  }
+  final case class TypePosition(history: List[HistEntry], encolsingNamespace: List[AvroNamespace], parentTypes:Set[String], schemaReferences:Map[String, Nu[AvroType]]) extends ParsingContext
+  final case class RecordFieldDefinition(history: List[HistEntry], encolsingNamespace: List[AvroNamespace], parentTypes:Set[String], schemaReferences:Map[String, Nu[AvroType]]) extends ParsingContext
+  final case class RecordFieldListDefinition(history: List[HistEntry], encolsingNamespace: List[AvroNamespace], parentTypes:Set[String], schemaReferences:Map[String, Nu[AvroType]]) extends ParsingContext
+  final case class DefaultDefinition(history: List[HistEntry], encolsingNamespace: List[AvroNamespace]) extends ParsingContext
+  final case class LiteralDefinition(history: List[HistEntry], encolsingNamespace: List[AvroNamespace]) extends ParsingContext
+  final case class AliasesDefinition(history: List[HistEntry], encolsingNamespace: List[AvroNamespace]) extends ParsingContext
+  final case class DefaultValueDefition(history: List[HistEntry], encolsingNamespace: List[AvroNamespace]) extends ParsingContext
+  final case class EnumSymbolDefinition(history: List[HistEntry], encolsingNamespace: List[AvroNamespace]) extends ParsingContext
 
 
 
@@ -94,7 +116,7 @@ object AvroJsonFAlgebras {
   the entire Nu, thus probably running infinitely. Greg Pfeil pointed this out together with the solution https://github.com/sellout/recursion-schemes-cookbook/tree/drafts/AttributeGrammars
   rather then outputing the result directly in the fold, we output a function from some context to our result type. This allows us to effectively pass parameters INTO the fold.
 
-  Now about the either. We unfold a JsonF into an AvroType which is substentially richer than JsonF. This means we do NOT have 1 to 1 mappings from the members of the JsonF GADT to the AvroType one.
+  Now about the either. We unfold a JsonF into an AvroType which is substantially richer than JsonF. This means we do NOT have 1 to 1 mappings from the members of the JsonF GADT to the AvroType one.
   Now this means when we traverse through JsonF we have to be aware what we're looking at e.g. a JsonObject has to be a type if it is at the root (type position) or if it's in a property called "type" but
   on the other hand if it is in a List which is in turn in a property called "fields" it means the object is actually a record field definition.
 
@@ -130,7 +152,7 @@ object AvroJsonFAlgebras {
             .map(eval => eval(parsingContext))
             .traverse(
               m => m.flatMap(
-                x => if (f.isDefinedAt(x)) f(x) else  M.raiseError[T](InvalidParserState(parsingContext, expected, x))
+                x => if (f.isDefinedAt(x)) f(x) else  M.raiseError[T](UnexpectedParsingResult(parsingContext, expected, x))
               )
             )
 
@@ -151,57 +173,57 @@ object AvroJsonFAlgebras {
 
         jsonF match {
           case json:JsonFNull[Out]         =>  {
-            case LiteralDefinition() => M.pure(NullLiteral())
-            case DefaultDefinition() => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNull[F[JsonF]]())))
-            case context: ParsingContext => M.raiseError(UnexpectedJsonType(json, context))
+            case LiteralDefinition(_, _) => M.pure(NullLiteral())
+            case DefaultDefinition(_ ,_) => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNull[F[JsonF]]())))
+            case context: ParsingContext => M.raiseError(InvalidParserState(context, Set("LiteralDefinition", "DefaultDefinition")))
           }
           case json:JsonFTrue[Out]         =>  {
-            case LiteralDefinition() => M.pure(BooleanLiteral(true))
-            case DefaultDefinition() => M.pure(JsonFLiteral(jsonBirec.embed(JsonFTrue[F[JsonF]]())))
-            case context: ParsingContext => M.raiseError(UnexpectedJsonType(json, context))
+            case LiteralDefinition(_, _) => M.pure(BooleanLiteral(true))
+            case DefaultDefinition(_, _) => M.pure(JsonFLiteral(jsonBirec.embed(JsonFTrue[F[JsonF]]())))
+            case context: ParsingContext => M.raiseError(InvalidParserState(context, Set("LiteralDefinition", "DefaultDefinition")))
           }
           case json:JsonFFalse[Out]        =>  {
-            case LiteralDefinition() => M.pure(BooleanLiteral(false))
-            case DefaultDefinition() => M.pure(JsonFLiteral(jsonBirec.embed(JsonFFalse[F[JsonF]]())))
-            case context: ParsingContext => M.raiseError(UnexpectedJsonType(json, context))
+            case LiteralDefinition(_, _) => M.pure(BooleanLiteral(false))
+            case DefaultDefinition(_, _) => M.pure(JsonFLiteral(jsonBirec.embed(JsonFFalse[F[JsonF]]())))
+            case context: ParsingContext => M.raiseError(InvalidParserState(context, Set("LiteralDefinition", "DefaultDefinition")))
           }
           case json:JsonFNumberBigDecimal[Out]    =>  {
-            case LiteralDefinition() => M.pure(BigDecimalLiteral(json.value))
-            case DefaultDefinition() => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberBigDecimal[F[JsonF]](json.value))))
-            case context: ParsingContext => M.raiseError(UnexpectedJsonType(json, context))
+            case LiteralDefinition(_, _) => M.pure(BigDecimalLiteral(json.value))
+            case DefaultDefinition(_, _) => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberBigDecimal[F[JsonF]](json.value))))
+            case context: ParsingContext => M.raiseError(InvalidParserState(context, Set("LiteralDefinition", "DefaultDefinition")))
           }
           case json:JsonFNumberDouble[Out] =>  {
-            case LiteralDefinition() => M.pure(DoubleLiteral(json.value))
-            case DefaultDefinition() => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberDouble[F[JsonF]](json.value))))
-            case context: ParsingContext => M.raiseError(UnexpectedJsonType(json, context))
+            case LiteralDefinition(_, _) => M.pure(DoubleLiteral(json.value))
+            case DefaultDefinition(_, _) => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberDouble[F[JsonF]](json.value))))
+            case context: ParsingContext => M.raiseError(InvalidParserState(context, Set("LiteralDefinition", "DefaultDefinition")))
           }
           case json:JsonFNumberBigInt[Out]    =>  {
-            case LiteralDefinition() => M.pure(BigIntLiteral(json.value))
-            case DefaultDefinition() => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberBigInt[F[JsonF]](json.value))))
-            case context: ParsingContext => M.raiseError(UnexpectedJsonType(json, context))
+            case LiteralDefinition(_, _) => M.pure(BigIntLiteral(json.value))
+            case DefaultDefinition(_, _) => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberBigInt[F[JsonF]](json.value))))
+            case context: ParsingContext => M.raiseError(InvalidParserState(context, Set("LiteralDefinition", "DefaultDefinition")))
           }
           case json:JsonFNumberLong[Out]    =>  {
-            case LiteralDefinition() => M.pure(LongLiteral(json.value))
-            case DefaultDefinition() => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberLong[F[JsonF]](json.value))))
-            case context: ParsingContext => M.raiseError(UnexpectedJsonType(json, context))
+            case LiteralDefinition(_, _) => M.pure(LongLiteral(json.value))
+            case DefaultDefinition(_, _) => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberLong[F[JsonF]](json.value))))
+            case context: ParsingContext => M.raiseError(InvalidParserState(context, Set("LiteralDefinition", "DefaultDefinition")))
           }
           case json:JsonFNumberInt[Out]    =>  {
-            case LiteralDefinition() => M.pure(IntLiteral(json.value))
-            case DefaultDefinition() => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberInt[F[JsonF]](json.value))))
-            case context: ParsingContext => M.raiseError(UnexpectedJsonType(json, context))
+            case LiteralDefinition(_, _) => M.pure(IntLiteral(json.value))
+            case DefaultDefinition(_, _) => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberInt[F[JsonF]](json.value))))
+            case context: ParsingContext => M.raiseError(InvalidParserState(context, Set("LiteralDefinition", "DefaultDefinition")))
           }
           case json:JsonFNumberShort[Out]    =>  {
-            case LiteralDefinition() => M.pure(ShortLiteral(json.value))
-            case DefaultDefinition() => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberShort[F[JsonF]](json.value))))
-            case context: ParsingContext => M.raiseError(UnexpectedJsonType(json, context))
+            case LiteralDefinition(_, _) => M.pure(ShortLiteral(json.value))
+            case DefaultDefinition(_, _) => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberShort[F[JsonF]](json.value))))
+            case context: ParsingContext => M.raiseError(InvalidParserState(context, Set("LiteralDefinition", "DefaultDefinition")))
           }
           case json:JsonFNumberByte[Out]    =>  {
-            case LiteralDefinition() => M.pure(ByteLiteral(json.value))
-            case DefaultDefinition() => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberByte[F[JsonF]](json.value))))
-            case context: ParsingContext => M.raiseError(UnexpectedJsonType(json, context))
+            case LiteralDefinition(_, _) => M.pure(ByteLiteral(json.value))
+            case DefaultDefinition(_, _) => M.pure(JsonFLiteral(jsonBirec.embed(JsonFNumberByte[F[JsonF]](json.value))))
+            case context: ParsingContext => M.raiseError(InvalidParserState(context, Set("LiteralDefinition", "DefaultDefinition")))
           }
           case json:JsonFString[Out]       =>  {
-            case TypePosition(parents, refs)    => {
+            case TypePosition(_, _, parents, refs)    => {
               if (parents.contains(json.value))
                 M.pure(
                   AvroTypeResult(
@@ -219,19 +241,19 @@ object AvroJsonFAlgebras {
                   case None => M.raiseError[ParsingResult](UnkownSchemaReference(json.value, refs.keys.toSet))
                 }
             }
-            case LiteralDefinition() => M.pure(StringLiteral(json.value))
-            case DefaultDefinition() => M.pure(JsonFLiteral(jsonBirec.embed(JsonFString[F[JsonF]](json.value))))
-            case context: ParsingContext => M.raiseError(UnexpectedJsonType(json, context))
+            case LiteralDefinition(_, _) => M.pure(StringLiteral(json.value))
+            case DefaultDefinition(_, _) => M.pure(JsonFLiteral(jsonBirec.embed(JsonFString[F[JsonF]](json.value))))
+            case context: ParsingContext => M.raiseError(InvalidParserState(context, Set("LiteralDefinition", "DefaultDefinition", "TypePosition")))
           }
           // Can be a Union if in type position, or a list of fields if in the fields property
           case json:JsonFArray[Out] => {
-            case context@TypePosition(parents, refs) => {
+            case context@TypePosition(history, ns, parents, refs) => {
               json.values
-                .map(parse => parse(TypePosition(parents, refs)))
+                .map(parse => parse(TypePosition(HistEntry(context, json) :: history, ns, parents, refs)))
                 .traverse(
                   m => m.flatMap {
                     case x:AvroTypeResult => M.pure[AvroTypeResult](x)
-                    case e:ParsingResult  => M.raiseError[AvroTypeResult](InvalidParserState(context, "AvroType", e))
+                    case e:ParsingResult  => M.raiseError[AvroTypeResult](UnexpectedParsingResult(context, "AvroType", e))
                   }
                 )
                 .map(
@@ -246,94 +268,104 @@ object AvroJsonFAlgebras {
                   }
                 )
             }
-            case context@RecordFieldListDefinition(parents, refs) =>
+            case context@RecordFieldListDefinition(history, ns, parents, refs) =>
               json.values.foldRight(
                 M.pure((Map.empty[String, Nu[AvroType]], List.empty[FieldDefinition]))
               )(
                 (parse, m) => m.flatMap(
                   tpl => {
-                    parse(RecordFieldDefinition(parents, refs ++ tpl._1)).flatMap {
+                    parse(RecordFieldDefinition(HistEntry(context, json) :: history, ns,parents, refs ++ tpl._1)).flatMap {
                       case f: FieldDefinition => M.pure((tpl._1 ++ f.discoveredTypes, f :: tpl._2 ))
-                      case e => M.raiseError[(Map[String, Nu[AvroType]], List[FieldDefinition])](InvalidParserState(context, "field definition",  e))
+                      case e => M.raiseError[(Map[String, Nu[AvroType]], List[FieldDefinition])](UnexpectedParsingResult(context, "field definition",  e))
                     }
                   }
                 )
               ).map(
                 tpl => FieldDefinitions(tpl._1, tpl._2)
               )
-            case DefaultDefinition() =>
+            case context@DefaultDefinition(history, ns) =>
               json.values.traverse(
-                parse => parse(DefaultDefinition()).flatMap {
+                parse => parse(DefaultDefinition(HistEntry(context, json) :: history, ns)).flatMap {
                   case jl: JsonFLiteral[F] => M.pure(jl.jsonF)
-                  case x => M.raiseError[F[JsonF]](InvalidParserState(DefaultDefinition(), "default jsonF of array", x))
+                  case x => M.raiseError[F[JsonF]](UnexpectedParsingResult(DefaultDefinition(HistEntry(context, json) :: history, ns), "default jsonF of array", x))
                 }
               ).map(values => JsonFLiteral(jsonBirec.embed(JsonFArray(values))))
 
-            case context: ParsingContext => M.raiseError(UnexpectedJsonType(json, context))
+            case context: ParsingContext => M.raiseError(InvalidParserState(context, Set("DefaultDefinition", "RecordFieldListDefinition", "TypePosition")))
           }
           case json:JsonFObject[Out] => {
-            case context@TypePosition(parents, refs) =>
+            case context@TypePosition(history, ns, parents, refs) =>
               for {
-                  typeString <- fieldAs(json.fields)("type", "avro complex type String literal")(LiteralDefinition()){
+                  typeString <- fieldAs(json.fields)("type", "avro complex type String literal")(LiteralDefinition(HistEntry(context, json) :: history, ns)){
                         case StringLiteral(s) => M.pure(s)
                       }
 
 
                   discoveryTypeTuple <- typeString match {
                     case "array" =>
-                      fieldAs(json.fields)("items", "array items type definition")(TypePosition(parents, refs)) {
+                      fieldAs(json.fields)("items", "array items type definition")(TypePosition(HistEntry(context, json) :: history, ns, parents, refs)) {
                         case AvroTypeResult(discovered, resType) => M.pure(discovered, AvroArrayType(resType): AvroType[Nu[AvroType]])
                       }
                     case "map" =>
-                      fieldAs(json.fields)("values", "map value type definition")(TypePosition(parents, refs)){
+                      fieldAs(json.fields)("values", "map value type definition")(TypePosition(HistEntry(context, json) :: history, ns, parents, refs)){
                         case AvroTypeResult(discovered, resType) => M.pure(discovered, AvroMapType(resType):AvroType[Nu[AvroType]])
                       }
                     case "fixed" => for {
-                      namespace <- fieldAsOpt(json.fields)("namespace", "fixed namespace String literal")(LiteralDefinition()){
+                      namespaceLocal <- fieldAsOpt(json.fields)("namespace", "fixed namespace String literal")(LiteralDefinition(HistEntry(context, json) :: history, ns)){
                         case StringLiteral(s) => refine[String, AvroValidNamespace](s)
                       }
 
-                      name <- fieldAs(json.fields)("name", "fixed name String literal")(LiteralDefinition()) {
+                      namespace = namespaceLocal <+> ns.headOption
+
+                      histNamespaces = namespaceLocal.map(nsl => nsl :: ns).getOrElse(ns)
+
+                      name <- fieldAs(json.fields)("name", "fixed name String literal")(LiteralDefinition(HistEntry(context, json) :: history, histNamespaces)) {
                         case StringLiteral(s) => refine[String, AvroValidName](s)
                       }
 
-                      doc <- fieldAsOpt(json.fields)("doc", "fixed doc String literal")(LiteralDefinition()) {
+                      fqn = Util.constructFQN(namespace, name)
+
+                      doc <- fieldAsOpt(json.fields)("doc", "fixed doc String literal")(LiteralDefinition(HistEntry(context, json) :: history, histNamespaces)) {
                         case StringLiteral(s) => M.pure(s)
                       }
 
-                      aliases <- fieldAsOpt(json.fields)("aliases", "fixed aliases")(AliasesDefinition()) {
+                      aliases <- fieldAsOpt(json.fields)("aliases", "fixed aliases")(AliasesDefinition(HistEntry(context, json) :: history, histNamespaces)) {
                         case Aliases(aliases) => M.pure(aliases)
                       }
 
-                      length <- fieldAs(json.fields)("length", "fixed length")(LiteralDefinition()) {
+                      length <- fieldAs(json.fields)("length", "fixed length")(LiteralDefinition(HistEntry(context, json) :: history, histNamespaces)) {
                         case IntLiteral(i) => refine[Int, Positive](i)
                         case ShortLiteral(i) => refine[Int, Positive](i)
                         case ByteLiteral(i) => refine[Int, Positive](i)
                       }
 
-                      fqn = Util.constructFQN(namespace, name)
+
 
                       avroType = AvroFixedType[Nu[AvroType]](namespace, name, doc, aliases, length):AvroType[Nu[AvroType]]
 
                     } yield (refs ++ Map(fqn.value -> typeBirec.embed(avroType)), avroType)
                     case "enum" => for {
-                      namespace <- fieldAsOpt(json.fields)("namespace", "enum namespace")(LiteralDefinition()) {
+                      namespaceLocal <- fieldAsOpt(json.fields)("namespace", "enum namespace")(LiteralDefinition(HistEntry(context, json) :: history, ns)) {
                         case StringLiteral(s) => refine[String, AvroValidNamespace](s)
                       }
 
-                      name <- fieldAs(json.fields)("name", "enum name")(LiteralDefinition()) {
+                      namespace = namespaceLocal <+> ns.headOption
+
+                      histNamespaces = namespaceLocal.map(nsl => nsl :: ns).getOrElse(ns)
+
+                      name <- fieldAs(json.fields)("name", "enum name")(LiteralDefinition(HistEntry(context, json) :: history, histNamespaces)) {
                         case StringLiteral(s) => refine[String, AvroValidName](s)
                       }
 
-                      doc <- fieldAsOpt(json.fields)("doc", "enum doc")(LiteralDefinition()) {
+                      doc <- fieldAsOpt(json.fields)("doc", "enum doc")(LiteralDefinition(HistEntry(context, json) :: history, histNamespaces)) {
                         case StringLiteral(s) => M.pure(s)
                       }
 
-                      aliases <- fieldAsOpt(json.fields)("aliases", "enum aliases")(AliasesDefinition()) {
+                      aliases <- fieldAsOpt(json.fields)("aliases", "enum aliases")(AliasesDefinition(HistEntry(context, json) :: history, histNamespaces)) {
                         case Aliases(aliases) => M.pure(aliases)
                       }
 
-                      symbols <- fieldAs(json.fields)("symbols", "enum symbols")(EnumSymbolDefinition()) {
+                      symbols <- fieldAs(json.fields)("symbols", "enum symbols")(EnumSymbolDefinition(HistEntry(context, json) :: history, histNamespaces)) {
                         case EnumSymbols(symbols) => M.pure(symbols)
                       }
 
@@ -345,26 +377,31 @@ object AvroJsonFAlgebras {
 
                     case "record" => {
                       for {
-                        namespace <- fieldAsOpt(json.fields)("namespace", "record namespace")(LiteralDefinition()) {
+                        namespaceLocal <- fieldAsOpt(json.fields)("namespace", "record namespace")(LiteralDefinition(HistEntry(context, json) :: history, ns)) {
                           case StringLiteral(s) => refine[String, AvroValidNamespace](s)
                         }
 
-                        name <- fieldAs(json.fields)("name", "record name")(LiteralDefinition()) {
+                        namespace = namespaceLocal <+> ns.headOption
+
+                        histNamespaces = namespaceLocal.map(nsl => nsl :: ns).getOrElse(ns)
+
+
+                        name <- fieldAs(json.fields)("name", "record name")(LiteralDefinition(HistEntry(context, json) :: history, histNamespaces)) {
                           case StringLiteral(s) => refine[String, AvroValidName](s)
                         }
 
-                        doc <- fieldAsOpt(json.fields)("doc", "record doc")(LiteralDefinition()) {
+                        doc <- fieldAsOpt(json.fields)("doc", "record doc")(LiteralDefinition(HistEntry(context, json) :: history, histNamespaces)) {
                           case StringLiteral(s) => M.pure(s)
                         }
 
-                        aliases <- fieldAsOpt(json.fields)("aliases", "record aliases")(AliasesDefinition()) {
+                        aliases <- fieldAsOpt(json.fields)("aliases", "record aliases")(AliasesDefinition(HistEntry(context, json) :: history, histNamespaces)) {
                           case Aliases(aliases) => M.pure(aliases)
                         }
 
                         fqn = Util.constructFQN(namespace, name).value
 
                         fieldsDefinition <- fieldAs(json.fields)("fields", "record fields")(
-                          RecordFieldListDefinition(parents + fqn, refs)
+                          RecordFieldListDefinition(HistEntry(context, json) :: history, histNamespaces, parents + fqn, refs)
                         ) {
                           case x:FieldDefinitions => M.pure(x)
                         }
@@ -400,21 +437,21 @@ object AvroJsonFAlgebras {
                     }
                   }
                 } yield AvroTypeResult(discoveryTypeTuple._1, typeBirec.embed(discoveryTypeTuple._2))
-            case RecordFieldDefinition(parents, refs) =>
+            case context@RecordFieldDefinition(history, ns, parents, refs) =>
               for {
-                name <- fieldAs(json.fields)("name", "field name")(LiteralDefinition()) {
+                name <- fieldAs(json.fields)("name", "field name")(LiteralDefinition(HistEntry(context, json) :: history, ns)) {
                   case StringLiteral(s) => refine[String, AvroValidName](s)
                 }
 
-                doc <- fieldAsOpt(json.fields)("doc", "field doc")(LiteralDefinition()) {
+                doc <- fieldAsOpt(json.fields)("doc", "field doc")(LiteralDefinition(HistEntry(context, json) :: history, ns)) {
                   case StringLiteral(s) => M.pure(s)
                 }
 
-                aliases <- fieldAsOpt(json.fields)("aliases", "field aliases")(AliasesDefinition()) {
+                aliases <- fieldAsOpt(json.fields)("aliases", "field aliases")(AliasesDefinition(HistEntry(context, json) :: history, ns)) {
                   case Aliases(aliases) => M.pure(aliases)
                 }
 
-                orderOpt <- fieldAsOpt(json.fields)("order", "field order")(LiteralDefinition()) {
+                orderOpt <- fieldAsOpt(json.fields)("order", "field order")(LiteralDefinition(HistEntry(context, json) :: history, ns)) {
                     case StringLiteral(s) => s match {
                       case "ignore" => M.pure[AvroRecordSortOrder](ARSOIgnore)
                       case "ascending" => M.pure[AvroRecordSortOrder](ARSOAscending)
@@ -425,12 +462,12 @@ object AvroJsonFAlgebras {
 
                 order <- M.pure(orderOpt.getOrElse(ARSOIgnore))
 
-                avroTypeResult <- fieldAs(json.fields)("type", "field type")(TypePosition(parents, refs)){
+                avroTypeResult <- fieldAs(json.fields)("type", "field type")(TypePosition(HistEntry(context, json) :: history, ns, parents, refs)){
                   case x:AvroTypeResult => M.pure(x)
                 }
 
 
-                defaultAvroValue <- fieldAsOpt(json.fields)("default", "default value")(DefaultDefinition()) {
+                defaultAvroValue <- fieldAsOpt(json.fields)("default", "default value")(DefaultDefinition(HistEntry(context, json) :: history, ns)) {
                   case jl:JsonFLiteral[F] => {
                     val parser = jsonBirec.cata(jl.jsonF)(parseAvroDatumAlgebra[M])
                     parser(typeBirec.project(avroTypeResult.avroType))
@@ -440,16 +477,16 @@ object AvroJsonFAlgebras {
               } yield FieldDefinition(refs ++ avroTypeResult.refs, AvroRecordFieldMetaData(name, doc, defaultAvroValue, order, aliases), avroTypeResult.avroType):ParsingResult
 
 
-            case DefaultDefinition() =>
+            case context@DefaultDefinition(history, ns) =>
               json.fields.traverse(
-                parse => parse(DefaultDefinition()).flatMap {
+                parse => parse(DefaultDefinition(HistEntry(context, json) :: history, ns)).flatMap {
                   case jl:JsonFLiteral[F] => M.pure(jl.jsonF)
-                  case x => M.raiseError[F[JsonF]](InvalidParserState(DefaultDefinition(), "default jsonF of object", x))
+                  case x => M.raiseError[F[JsonF]](UnexpectedParsingResult(context, "default jsonF of object", x))
                 }
               ).map(values => JsonFLiteral(jsonBirec.embed(JsonFObject(values))))
 
 
-            case context: ParsingContext => M.raiseError(UnexpectedJsonType(json, context))
+            case context: ParsingContext => M.raiseError(InvalidParserState(context, Set("DefaultDefinition", "TypePostion", "RecordFieldDefinition")))
           }
     }
   }
@@ -657,25 +694,10 @@ object AvroJsonFAlgebras {
   ):M[Nu[AvroType]] = for {
     jsonF <- parseJsonF[M,Fix](schemaString)
     resultFunction = jsonF.cata(parseAvroSchemaAlgebra[M, Fix])
-    result <- M.pure(resultFunction(
-      TypePosition(
-        Set.empty[String],
-        Map(
-        "null" -> typeBirec.embed(AvroNullType()),
-        "boolean" -> typeBirec.embed(AvroBooleanType()),
-        "int" -> typeBirec.embed(AvroIntType()),
-        "long" -> typeBirec.embed(AvroLongType()),
-        "float" -> typeBirec.embed(AvroFloatType()),
-        "double" -> typeBirec.embed(AvroDoubleType()),
-        "bytes" -> typeBirec.embed(AvroBytesType()),
-        "string" -> typeBirec.embed(AvroStringType())
-        )
-      )
-    ))
-
-    out <- result.flatMap {
+    result <- resultFunction(ParsingContext.root)
+    out <- result match {
       case AvroTypeResult(_, x) => M.pure(x)
-      case x:ParsingResult => M.raiseError[Nu[AvroType]](new RuntimeException(s"Invalid final Parser State $x"))
+      case x:ParsingResult => M.raiseError[Nu[AvroType]](UnexpectedParsingResult(ParsingContext.root, "An AvroType represented by the passed Schema", x))
     }
 
   } yield out
