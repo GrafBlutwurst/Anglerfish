@@ -13,7 +13,7 @@ import ch.grafblutwurst.anglerfish.core.scalaZExtensions.MonadErrorSyntax._
 import ch.grafblutwurst.anglerfish.core.stdLibExtensions.ListSyntax._
 import ch.grafblutwurst.anglerfish.data.avro.AvroJsonFAlgebras.{FoundUndeclaredFields, MissingDeclaredFields}
 import ch.grafblutwurst.anglerfish.data.avro.AvroJsonFAlgebras.ParsingContext.HistEntry
-import matryoshka.{Algebra, Birecursive, Coalgebra, Corecursive, Recursive}
+import matryoshka.{Algebra, Birecursive, Coalgebra, Corecursive, GCoalgebra, Recursive}
 import matryoshka.implicits._
 import eu.timepit.refined.api.{Refined, Validate}
 import eu.timepit.refined.auto._
@@ -123,6 +123,82 @@ object AvroJsonFAlgebras {
   final case class FieldDefinitions(refs:Map[String, Nu[AvroType]], fields:List[FieldDefinition]) extends ParsingResult
   final case class AvroTypeResult(refs:Map[String, Nu[AvroType]],avroType: Nu[AvroType]) extends ParsingResult
 
+
+  def AvroValueToJsonF(implicit corec:Corecursive.Aux[Fix[AvroValue[Nu[AvroType], ?]], AvroValue[Nu[AvroType], ?]]):Algebra[AvroValue[Nu[AvroType], ?],Fix[JsonF]] = ???
+
+
+  def AvroSchemaToJsonF(implicit corec:Corecursive.Aux[Fix[JsonF], JsonF], valueBirec:Birecursive.Aux[Fix[AvroValue[Nu[AvroType], ?]], AvroValue[Nu[AvroType], ?]]):GCoalgebra[Free[JsonF, ?], JsonF, Nu[AvroType]] = {
+    def freeJsonFString(s:String):Free[JsonF, Nu[AvroType]] = Free.liftF(JsonFString(s))
+    def freeJsonFArray(lst:List[Free[JsonF, Nu[AvroType]]]):Free[JsonF, Nu[AvroType]] = Free(JsonFArray(lst))
+    def freeJsonFObject(lstMap:ListMap[String, Free[JsonF, Nu[AvroType]]]): Free[JsonF, Nu[AvroType]] = Free(JsonFObject(lstMap))
+
+    nu =>
+      nu.project match {
+        case AvroNullType() => JsonFString("null")
+        case AvroBooleanType() => JsonFString("boolean")
+        case AvroIntType() => JsonFString("int")
+        case AvroLongType() => JsonFString("long")
+        case AvroFloatType() => JsonFString("float")
+        case AvroDoubleType() => JsonFString("double")
+        case AvroBytesType() => JsonFString("bytes")
+        case AvroStringType() => JsonFString("string")
+        case AvroRecordType(namespace, name, doc, aliases, fields) =>
+          JsonFObject(
+            ListMap("type" -> freeJsonFString("record")) ++
+              namespace.map(ns => ListMap("namespace" -> freeJsonFString(ns.value))).getOrElse(ListMap.empty[String, Free[JsonF, Nu[AvroType]]]) ++
+              ListMap("name" -> freeJsonFString(name.value)) ++
+              doc.map(doc => ListMap("doc" -> freeJsonFString(doc))).getOrElse(ListMap.empty[String, Free[JsonF, Nu[AvroType]]]) ++
+              aliases.map(
+                aliasesSet => ListMap("aliases" -> freeJsonFArray(aliasesSet.toList.map(s => freeJsonFString(s.value))))
+              ).getOrElse(ListMap.empty[String, Free[JsonF, Nu[AvroType]]]) ++
+              ListMap(
+                "fields" ->
+                  freeJsonFArray(
+                    fields.toList.map(
+                      kv =>
+                        freeJsonFObject(
+                          ListMap("name" -> freeJsonFString(kv._1.name)) ++
+                          kv._1.doc.map(doc => ListMap("doc" -> freeJsonFString(doc))).getOrElse(ListMap.empty[String, Free[JsonF, Nu[AvroType]]]) ++
+                          //kv._1.default.map(defaultValue => ListMap("default" -> Free.liftF[JsonF, Nu[AvroType]](valueBirec.cata(defaultValue)(AvroValueToJsonF).unFix))).getOrElse(ListMap.empty[String, Free[JsonF, Nu[AvroType]]]) ++
+                          ListMap(
+                            "order" -> (
+                              kv._1.order match {
+                                case ARSOAscending => freeJsonFString("ascending")
+                                case ARSODescending => freeJsonFString("descending")
+                                case ARSOIgnore => freeJsonFString("ignore")
+                              }
+                              )
+                          ) ++
+                          kv._1.aliases.map(
+                            aliasesSet => ListMap("aliases" -> freeJsonFArray(aliasesSet.toList.map(s => freeJsonFString(s.value))))
+                          ).getOrElse(ListMap.empty[String, Free[JsonF, Nu[AvroType]]]) ++
+                          ListMap("type" -> Free.pure[JsonF, Nu[AvroType]](kv._2))
+                        )
+                    )
+                  )
+              )
+          )
+        case AvroEnumType(namespace, name, doc, aliases, symbols) =>
+          JsonFObject(
+            ListMap("type" -> freeJsonFString("enum")) ++
+              namespace.map(ns => ListMap("namespace" -> freeJsonFString(ns))).getOrElse(ListMap.empty[String, Free[JsonF, Nu[AvroType]]]) ++
+              ListMap("name" -> freeJsonFString(name.value)) ++
+              doc.map(doc => ListMap("doc" -> freeJsonFString(doc))).getOrElse(ListMap.empty[String, Free[JsonF, Nu[AvroType]]]) ++
+              aliases.map(
+                aliasesSet =>
+                  ListMap(
+                    "aliases" -> freeJsonFArray(aliasesSet.toList.map(s => freeJsonFString(s.value)))
+
+                  )
+              ).getOrElse(ListMap.empty[String, Free[JsonF, Nu[AvroType]]]) ++
+              ListMap("symbols" -> freeJsonFArray(symbols.map(s => freeJsonFString(s)).toList))
+          )
+
+
+      }
+
+
+  }
 
   /*
   Some explanation is waranted here. So IF we already had dependent functiontypes this algebra would look something like this
