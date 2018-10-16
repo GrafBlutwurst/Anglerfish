@@ -61,7 +61,7 @@ object JsonFAlgebras {
       elem = JsonFArray(values.map(_.hcursor:ACursor).toList)
     } yield elem
     case cursor:ACursor if cursor.focus.exists(_.isObject) => for {
-      fieldNames <- M.fromEither(cursor.fields.toRight(liskov(CirceDecodingError(DecodingFailure("Was Not actually an Array", cursor.history)))))
+      fieldNames <- M.fromEither(cursor.keys.toRight(liskov(CirceDecodingError(DecodingFailure("Was Not actually an Array", cursor.history)))))
       properties = fieldNames.foldLeft(ListMap.empty[String, ACursor])((map, fieldName) => map + (fieldName -> cursor.downField(fieldName)))
       elem = JsonFObject(properties)
     } yield elem

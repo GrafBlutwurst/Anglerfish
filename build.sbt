@@ -2,7 +2,7 @@
 organization := "ch.grafblutwurst"
 name := "anglerfish"
 
-version := "0.1.9"
+version := "0.1.10"
 
 crossScalaVersions := Seq("2.11.8", "2.12.4")
 
@@ -10,12 +10,11 @@ resolvers += Resolver.sonatypeRepo("releases")
 
 
 val refinedVersion = "0.9.2"
-val circeVersion = "0.9.3"
 val derivingVersion = "1.0.0"
+val circeVersion = "0.10.0"
 
 libraryDependencies ++= Seq(
   "org.apache.avro"     % "avro"                        % "1.8.2",
-  "org.typelevel"       %% "cats-effect"                % "1.0.0-RC2",
   "io.circe"            %% "circe-core"                 % circeVersion,
   "io.circe"            %% "circe-parser"               % circeVersion,
   "io.circe"            %% "circe-generic"              % circeVersion,
