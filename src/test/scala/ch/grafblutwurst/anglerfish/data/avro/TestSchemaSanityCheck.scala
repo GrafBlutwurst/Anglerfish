@@ -73,7 +73,7 @@ object TestSchemaSanityCheck extends Properties("Sanity Check") {
     } yield datum
 
      datum match {
-      case Left(err) => {println(err.toString);err.printStackTrace(); false :| "could not decode schema"}
+      case Left(err) => {println(err.toString); false :| "could not decode schema"}
       case Right(value) => {
         println(value)
         true :| "decode worked"

@@ -17,7 +17,16 @@ import scala.collection.immutable.ListMap
 
 object JsonFAlgebras {
 
-  sealed trait JsonError extends Throwable
+  sealed trait JsonError extends Throwable{
+    override def getMessage: String = Show[JsonError].shows(this)
+  }
+  object JsonError {
+    implicit val showInstance: Show[JsonError] = Show.shows[JsonError] {
+      case NumericTypeError(element) => s"$element could not be matched to allowed numeric type"
+      case CirceDecodingError(err) => err.getMessage()
+      case CirceParsingError(err) => err.getMessage()
+    }
+  }
   final case class NumericTypeError(element:JsonNumber) extends JsonError
   final case class CirceDecodingError(err:DecodingFailure) extends JsonError
   final case class CirceParsingError(err:ParsingFailure) extends JsonError

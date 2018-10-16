@@ -2,7 +2,7 @@
 organization := "ch.grafblutwurst"
 name := "anglerfish"
 
-version := "0.1.10"
+version := "0.1.11"
 
 crossScalaVersions := Seq("2.11.8", "2.12.4")
 

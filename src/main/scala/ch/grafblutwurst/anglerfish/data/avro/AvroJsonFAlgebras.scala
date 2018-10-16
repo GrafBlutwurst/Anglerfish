@@ -4,7 +4,7 @@ import java.util.Base64
 
 import scalaz._
 import Scalaz._
-import ch.grafblutwurst.anglerfish.data.avro.AvroData._
+import ch.grafblutwurst.anglerfish.data.avro.AvroData.{AvroNamespace, _}
 import ch.grafblutwurst.anglerfish.data.json.JsonData._
 import ch.grafblutwurst.anglerfish.data.json.JsonFAlgebras._
 import ch.grafblutwurst.anglerfish.data.avro.implicits._
@@ -31,17 +31,29 @@ import scala.collection.immutable.{ListMap, ListSet, Queue, Stack}
 object AvroJsonFAlgebras {
   
 
-  @deriving(Show)
-  sealed trait AvroError extends RuntimeException
+  sealed trait AvroError extends Throwable{
+    override def getMessage: String = Show[AvroError].shows(this)
+  }
 
   object AvroError{
-    implicit val fixedDefinitionShow: Show[AvroFixedType[Nu[AvroType]]] = new Show[AvroFixedType[Nu[AvroType]]] {
-      //override def shows(f: AvroFixedType[Nu[AvroType]]): String = s""" AvroFixedType(namespace = ${f.namespace}, name = ${f.name}, doc = ${f.doc}, aliases = ${f.aliases}, length = ${f.length.value})"""
+    implicit val show:Show[AvroError] = Show.shows[AvroError] {
+      case JsonFError(err) => Show[JsonError].shows(err)
+      case EnumError(expected, encountered) => s"""expected $expected, but found $encountered"""
+      case UnionError(_, reason) => reason
+      case UnionResolutionError(reason) => reason
+      case MissingDeclaredFields(fields) => s"""Missing Declared Fields: ${fields.mkString(",")}"""
+      case FoundUndeclaredFields(fields) => s"""Found Undeclared Fields: ${fields.mkString(",")}"""
+      case NoDefaultValue(field) => s"""required field $field neither had a value nor a default"""
+      case FixedError(expected, encounteredLength) => s"""expected $expected, but found $encounteredLength"""
+      case UnexpectedTypeError(base, contextSchema) => s"""expected $contextSchema, but found $base"""
+      case UnrepresentableError(base) => s"""found JSON Type not representable by AVRO: $base"""
+      case UnkownSchemaReference(errorReference, knownReferences) => s"""Found named reference $errorReference but it's currently not known (${knownReferences.mkString(",")})"""
+      case UnexpectedParsingResult(dispatchingContext, expected, got) => s"""Parsing Step resulted in unexpected result $got. Expected was: $expected"""
+      case InvalidParserState(parserContext, validStates) => s"""Detected invalid parser state $parserContext, allowed states are ${validStates.mkString(",")}"""
+      case UnknownFieldError(field, available) => s"""$field is missing in ${available.mkString(",")}"""
+      case RefinementError(error) => error
+      case UnknownSortOrder(error) => s"$error is not a valid sort order"
     }
-
-    implicit val enumDefinitionShow: Show[AvroEnumType[Nu[AvroType]]] = new Show[AvroEnumType[Nu[AvroType]]] {}
-
-    implicit val unionDefinitionShow: Show[AvroUnionType[Nu[AvroType]]] = new Show[AvroUnionType[Nu[AvroType]]] {}
   }
 
   final case class JsonFError(err: JsonError) extends AvroError
@@ -50,7 +62,6 @@ object AvroJsonFAlgebras {
   final case class EnumError(expected:AvroEnumType[Nu[AvroType]], encountered:String) extends AvroDatumError
   final case class UnionError(expected:AvroUnionType[Nu[AvroType]], reason:String) extends AvroDatumError
   final case class UnionResolutionError(reason:String) extends AvroDatumError
-  final case class ArrayError(reason:String) extends AvroDatumError
   final case class MissingDeclaredFields(fields:Set[String]) extends AvroDatumError
   final case class FoundUndeclaredFields(fields:Set[String]) extends AvroDatumError
   final case class NoDefaultValue(field:String) extends AvroDatumError
@@ -76,6 +87,7 @@ object AvroJsonFAlgebras {
     val encolsingNamespace: List[AvroNamespace]
   }
   object ParsingContext{
+
     final case class HistEntry(context:ParsingContext, jsonF: JsonF[_])
 
     def root(implicit typeCorec:Corecursive.Aux[Nu[AvroType], AvroType[?]]) = TypePosition(
@@ -129,6 +141,7 @@ object AvroJsonFAlgebras {
 
   def AvroSchemaToJsonF(implicit corec:Corecursive.Aux[Fix[JsonF], JsonF], valueBirec:Birecursive.Aux[Fix[AvroValue[Nu[AvroType], ?]], AvroValue[Nu[AvroType], ?]]):GCoalgebra[Free[JsonF, ?], JsonF, Nu[AvroType]] = {
     def freeJsonFString(s:String):Free[JsonF, Nu[AvroType]] = Free.liftF(JsonFString(s))
+    def freeJsonFInt(i:Int):Free[JsonF, Nu[AvroType]] = Free.liftF(JsonFNumberInt(i))
     def freeJsonFArray(lst:List[Free[JsonF, Nu[AvroType]]]):Free[JsonF, Nu[AvroType]] = Free(JsonFArray(lst))
     def freeJsonFObject(lstMap:ListMap[String, Free[JsonF, Nu[AvroType]]]): Free[JsonF, Nu[AvroType]] = Free(JsonFObject(lstMap))
 
@@ -193,6 +206,35 @@ object AvroJsonFAlgebras {
               ).getOrElse(ListMap.empty[String, Free[JsonF, Nu[AvroType]]]) ++
               ListMap("symbols" -> freeJsonFArray(symbols.map(s => freeJsonFString(s)).toList))
           )
+        case AvroArrayType(items) =>
+          JsonFObject(
+            ListMap("type" -> freeJsonFString("array")) ++
+            ListMap("items" -> Free.pure[JsonF, Nu[AvroType]](items))
+          )
+        case AvroMapType(values) =>
+          JsonFObject(
+            ListMap("type" -> freeJsonFString("array")) ++
+              ListMap("items" -> Free.pure[JsonF, Nu[AvroType]](values))
+          )
+        case AvroUnionType(members) => JsonFArray(
+          members.map(Free.pure[JsonF, Nu[AvroType]])
+        )
+        case AvroFixedType(namespace, name, doc, aliases, length) =>
+          JsonFObject(
+            ListMap("type" -> freeJsonFString("fixed")) ++
+              namespace.map(ns => ListMap("namespace" -> freeJsonFString(ns))).getOrElse(ListMap.empty[String, Free[JsonF, Nu[AvroType]]]) ++
+              ListMap("name" -> freeJsonFString(name.value)) ++
+              doc.map(doc => ListMap("doc" -> freeJsonFString(doc))).getOrElse(ListMap.empty[String, Free[JsonF, Nu[AvroType]]]) ++
+              aliases.map(
+                aliasesSet =>
+                  ListMap(
+                    "aliases" -> freeJsonFArray(aliasesSet.toList.map(s => freeJsonFString(s.value)))
+
+                  )
+              ).getOrElse(ListMap.empty[String, Free[JsonF, Nu[AvroType]]]) ++
+              ListMap("length" -> freeJsonFInt(length))
+          )
+        case AvroRecursionType(fqn, _) => JsonFString(fqn)
 
 
       }
