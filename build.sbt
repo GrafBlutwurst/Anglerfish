@@ -2,7 +2,7 @@
 organization := "ch.grafblutwurst"
 name := "anglerfish"
 
-version := "0.1.7"
+version := "0.1.13"
 
 crossScalaVersions := Seq("2.11.8", "2.12.4")
 
@@ -10,11 +10,10 @@ resolvers += Resolver.sonatypeRepo("releases")
 
 
 val refinedVersion = "0.9.2"
-val circeVersion = "0.9.3"
+val circeVersion = "0.10.0"
 
 libraryDependencies ++= Seq(
   "org.apache.avro"     % "avro"                        % "1.8.2",
-  "org.typelevel"       %% "cats-effect"                % "1.0.0-RC2",
   "io.circe"            %% "circe-core"                 % circeVersion,
   "io.circe"            %% "circe-parser"               % circeVersion,
   "io.circe"            %% "circe-generic"              % circeVersion,
@@ -26,7 +25,8 @@ libraryDependencies ++= Seq(
   "com.sksamuel.avro4s" %% "avro4s-core"                % "1.9.0" % "test",
   "com.sksamuel.avro4s" %% "avro4s-json"                % "1.9.0" % "test",
   "com.github.alexarchambault" %% "scalacheck-shapeless_1.13" % "1.1.6" % "test",
-  "com.codecommit" %% "shims" % "1.4.0"
+  "com.codecommit"             %% "shims"               % "1.4.0"
+
 )
 
 scalacOptions in Test ++= Seq("-Yrangepos")

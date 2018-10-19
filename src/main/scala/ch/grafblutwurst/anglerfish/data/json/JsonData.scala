@@ -19,4 +19,13 @@ object JsonData {
   final case class JsonFNumberByte[A](value:Byte) extends JsonF[A]
   final case class JsonFString[A](value:String) extends JsonF[A]
 
+
+  object JsonF {
+    def flatDescribe(jsonF: JsonF[_]):String = jsonF match {
+      case JsonFArray(values) => s"JsonFArray(length = ${values.length}" 
+      case JsonFObject(fields) => s"JsonFObject(fieldNames = ${fields.keys.mkString(",")})"
+      case x:JsonF[_] => x.toString
+    }
+  }
+
 }

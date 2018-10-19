@@ -8,7 +8,7 @@ import org.scalacheck.Properties
 import matryoshka._
 import matryoshka.implicits._
 import ch.grafblutwurst.anglerfish.data.avro.AvroData._
-import ch.grafblutwurst.anglerfish.data.avro.AvroJsonFAlgebras.UnexpectedTypeError
+import ch.grafblutwurst.anglerfish.data.avro.AvroJsonFAlgebras.{AvroError, UnexpectedTypeError}
 import ch.grafblutwurst.anglerfish.data.avro.implicits._
 import matryoshka.data.{Fix, Nu}
 
@@ -50,7 +50,8 @@ object TestSchemaSanityCheck extends Properties("Sanity Check") {
         |                  "value":5,
         |                  "tail": {
         |                    "foo" : {
-        |                      "value":6
+        |                      "value":6,
+        |                      "tail": null
         |                    }
         |                  }
         |                }
@@ -73,7 +74,10 @@ object TestSchemaSanityCheck extends Properties("Sanity Check") {
     } yield datum
 
      datum match {
-      case Left(err) => {println(err.toString);err.printStackTrace(); false :| "could not decode schema"}
+      case Left(err) => err match {
+        case err:AvroError => {false :| s"Avro error: ${err.getMessage}"}
+        case e:Throwable => false :| s"unknown error ${err.getMessage}"
+      }
       case Right(value) => {
         println(value)
         true :| "decode worked"
@@ -94,14 +98,6 @@ object TestSchemaSanityCheck extends Properties("Sanity Check") {
     } yield datum
 
     datum match {
-      case Left((src, err@UnexpectedTypeError(base, context))) => {
-        println(src)
-        println(base)
-        println(context)
-        println(err.toString)
-        err.printStackTrace()
-        false :| "could not decode schema"
-      }
       case Left(tpl) => {
         println(tpl._1)
         println(tpl._2.toString)
